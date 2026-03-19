@@ -55,8 +55,9 @@ services:
       videoconvert ! 
       videoscale ! 
       video/x-raw,width=640,height=480 ! 
-      comp.sink_0 
-      videotestsrc pattern=black ! video/x-raw,width=640,height=480 ! comp.sink_1 
+      tee name=t
+      t. ! queue ! comp.sink_0 
+      t. ! queue ! comp.sink_1 
       videotestsrc pattern=black ! video/x-raw,width=640,height=480 ! comp.sink_2 
       videotestsrc pattern=black ! video/x-raw,width=640,height=480 ! comp.sink_3
     networks:
