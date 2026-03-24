@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
     gstreamer1.0-libav \
+    gstreamer1.0-rtsp \
     gstreamer1.0-x \
     && rm -rf /var/lib/apt/lists/*
 
