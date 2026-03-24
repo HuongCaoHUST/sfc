@@ -11,7 +11,9 @@ services:
       videoconvert ! 
       x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 bitrate=2000 ! 
       rtph264pay config-interval=1 ! 
-      udpsink host=flipper port=5000 sync=false
+      tee name=t
+      t. ! queue ! udpsink host=flipper port=5000 sync=false
+      t. ! queue ! udpsink host=receiver port=5001 sync=false
     networks:
       - video_net
 
@@ -57,17 +59,14 @@ services:
       sink_3::xpos=640 sink_3::ypos=480 sink_3::width=640 sink_3::height=480 ! 
       videoconvert ! 
       autovideosink 
+      udpsrc port=5001 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
+      rtph264depay ! avdec_h264 ! videoconvert ! 
+      videoscale add-borders=true ! video/x-raw,width=640,height=480,pixel-aspect-ratio=1/1 ! queue ! comp.sink_0 
       udpsrc port=5000 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
-      rtph264depay ! 
-      avdec_h264 ! 
-      videoconvert ! 
-      videoscale ! 
-      video/x-raw,width=640,height=480 ! 
-      tee name=t
-      t. ! queue ! comp.sink_0 
-      t. ! queue ! comp.sink_1 
-      videotestsrc pattern=black ! video/x-raw,width=640,height=480 ! comp.sink_2 
-      videotestsrc pattern=black ! video/x-raw,width=640,height=480 ! comp.sink_3
+      rtph264depay ! avdec_h264 ! videoconvert ! 
+      videoscale add-borders=true ! video/x-raw,width=640,height=480,pixel-aspect-ratio=1/1 ! queue ! comp.sink_1 
+      videotestsrc pattern=black ! video/x-raw,width=640,height=480 ! queue ! comp.sink_2 
+      videotestsrc pattern=black ! video/x-raw,width=640,height=480 ! queue ! comp.sink_3
     networks:
       - video_net
 
