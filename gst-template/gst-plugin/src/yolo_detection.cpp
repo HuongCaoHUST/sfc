@@ -25,7 +25,7 @@ bool YoloDetector::load_model(const std::string& model_path, bool use_gpu) {
         
         Ort::AllocatorWithDefaultOptions allocator;
 
-        // Get input and output names using the older API. It returns a smart pointer.
+        // Get input and output names
         auto input_name_ptr = session->GetInputNameAllocated(0, allocator);
         input_names.push_back(input_name_ptr.get());
 
@@ -37,14 +37,12 @@ bool YoloDetector::load_model(const std::string& model_path, bool use_gpu) {
         auto tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
         input_shape = tensor_info.GetShape();
         
-        // Handle dynamic input dimensions (e.g., -1 for batch size or dimensions)
         if (input_shape[0] == -1) input_shape[0] = 1; // Batch size
         if (input_shape[2] == -1) input_shape[2] = 640; // Height
         if (input_shape[3] == -1) input_shape[3] = 640; // Width
 
         return true;
     } catch (const Ort::Exception& e) {
-        // Log the error message
         return false;
     }
 }
@@ -53,7 +51,7 @@ std::vector<Detection> YoloDetector::detect(cv::Mat& frame, float conf_threshold
     std::vector<Detection> results;
     if (!session) return results;
 
-    // --- Pre-processing ---
+    // Pre-processing
     int img_w = frame.cols;
     int img_h = frame.rows;
     int net_w = (int)input_shape[3];
@@ -71,7 +69,7 @@ std::vector<Detection> YoloDetector::detect(cv::Mat& frame, float conf_threshold
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
         memory_info, blob.ptr<float>(), blob.total(), input_shape.data(), input_shape.size());
 
-    // Create temporary vectors of const char* for the Run API
+    // Create temporary vectors
     std::vector<const char*> input_names_char;
     input_names_char.reserve(input_names.size());
     for (const auto& s : input_names) {
@@ -84,19 +82,17 @@ std::vector<Detection> YoloDetector::detect(cv::Mat& frame, float conf_threshold
         output_names_char.push_back(s.c_str());
     }
 
-    // --- Inference ---
+    // Inference
     auto output_tensors = session->Run(
         Ort::RunOptions{nullptr}, 
         input_names_char.data(), &input_tensor, 1, 
         output_names_char.data(), 1
     );
 
-    // --- Post-processing (for YOLOv8 output) ---
+    // Post-processing
     const float* raw_data = output_tensors[0].GetTensorData<float>();
     auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
     
-    // Output shape is typically [1, num_classes + 4, num_detections] e.g., [1, 84, 8400]
-    // We need to transpose it to [1, num_detections, num_classes + 4]
     int num_detections = (int)output_shape[2];
     int num_components = (int)output_shape[1];
     cv::Mat output_mat(num_components, num_detections, CV_32F, (float*)raw_data);
@@ -109,8 +105,6 @@ std::vector<Detection> YoloDetector::detect(cv::Mat& frame, float conf_threshold
     for (int i = 0; i < output_mat.rows; i++) {
         float* row = output_mat.ptr<float>(i);
         
-        // First 4 values are box_center_x, box_center_y, width, height
-        // The rest are class scores
         cv::Mat scores(1, num_components - 4, CV_32F, row + 4);
         cv::Point class_id_point;
         double max_score;
@@ -134,9 +128,8 @@ std::vector<Detection> YoloDetector::detect(cv::Mat& frame, float conf_threshold
         }
     }
 
-    // --- Non-Maximum Suppression (NMS) ---
+    // Non-Maximum Suppression
     std::vector<int> nms_indices;
-    // NMSBoxes requires a score threshold and an NMS threshold. We'll use 0.45 for NMS.
     cv::dnn::NMSBoxes(boxes, confidences, conf_threshold, 0.45f, nms_indices);
 
     for (int idx : nms_indices) {
@@ -150,7 +143,5 @@ std::vector<Detection> YoloDetector::detect(cv::Mat& frame, float conf_threshold
     return results; 
 }
 
-// Preprocess function is not explicitly used as blobFromImage handles it
 void YoloDetector::preprocess(cv::Mat& frame, float* blob) {
-    // This logic is now inside detect() using cv::dnn::blobFromImage
 }
