@@ -1,8 +1,6 @@
 /* 
  * GStreamer
- * Copyright (C) 2006 Stefan Kost <ensonic@users.sf.net>
- * Copyright (C) 2020 Niels De Graef <niels.degraef@gmail.com>
- * Copyright (C) YEAR AUTHOR_NAME AUTHOR_EMAIL
+ * Copyright (C) 2026 HuongCao <<user@hostname.org>>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -20,24 +18,38 @@
  * Boston, MA 02111-1307, USA.
  */
  
-#ifndef __GST_PLUGIN_TEMPLATE_H__
-#define __GST_PLUGIN_TEMPLATE_H__
+#ifndef __GST_YOLOCLASSIFICATION_H__
+#define __GST_YOLOCLASSIFICATION_H__
 
 #include <gst/gst.h>
 #include <gst/base/gstbasetransform.h>
+#include <gst/video/video.h>
+#include "yolo_engine.h"
+#include <vector>
+#include <string>
 
 G_BEGIN_DECLS
 
-#define GST_TYPE_PLUGIN_TEMPLATE (gst_plugin_template_get_type())
-G_DECLARE_FINAL_TYPE (GstPluginTemplate, gst_plugin_template,
-    GST, PLUGIN_TEMPLATE, GstBaseTransform)
+#define GST_TYPE_YOLOCLASSIFICATION (gst_yoloclassification_get_type())
+G_DECLARE_FINAL_TYPE (GstYoloClassification, gst_yoloclassification,
+    GST, YOLOCLASSIFICATION, GstBaseTransform)
 
-struct _GstPluginTemplate {
+class YoloClassifier;
+
+struct _GstYoloClassification {
   GstBaseTransform element;
 
-  gboolean silent;
+  gchar *model_path;      /* Model path */
+  gfloat conf_threshold;  /* Confidence threshold */
+
+  YoloClassifier *classifier;
+  GstVideoInfo *video_info;
+
+  GstClockTime last_time;
+  guint frame_count;
+  gdouble current_fps;
 };
 
 G_END_DECLS
 
-#endif /* __GST_PLUGIN_TEMPLATE_H__ */
+#endif /* __GST_YOLOCLASSIFICATION_H__ */

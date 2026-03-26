@@ -1,26 +1,33 @@
-#ifndef __YOLO_DETECTION_H__
-#define __YOLO_DETECTION_H__
+#ifndef __YOLO_ENGINE_H__
+#define __YOLO_ENGINE_H__
 
 #include <opencv2/opencv.hpp>
 #include <onnxruntime_cxx_api.h>
 #include <vector>
 #include <string>
 
+// Struct for detection results
 struct Detection {
     cv::Rect box;
     float confidence;
     int class_id;
 };
 
-class YoloDetector {
+// Struct for classification results
+struct Classification {
+    float confidence;
+    int class_id;
+};
+
+// Base class for YOLO models
+class YoloEngine {
 public:
-    YoloDetector();
-    ~YoloDetector();
+    YoloEngine();
+    virtual ~YoloEngine();
 
     bool load_model(const std::string& model_path, bool use_gpu = false);
-    std::vector<Detection> detect(cv::Mat& frame, float conf_threshold = 0.5f);
 
-private:
+protected:
     Ort::Env env;
     Ort::Session* session = nullptr;
     Ort::RunOptions run_options;
@@ -30,6 +37,18 @@ private:
     std::vector<std::string> output_names;
 
     void preprocess(cv::Mat& frame, float* blob);
+};
+
+// Derived class for YOLO detection
+class YoloDetector : public YoloEngine {
+public:
+    std::vector<Detection> detect(cv::Mat& frame, float conf_threshold = 0.5f);
+};
+
+// Derived class for YOLO classification
+class YoloClassifier : public YoloEngine {
+public:
+    std::vector<Classification> classify(cv::Mat& frame, float conf_threshold = 0.5f);
 };
 
 #endif
