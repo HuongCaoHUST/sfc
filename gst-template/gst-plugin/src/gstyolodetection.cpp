@@ -53,6 +53,7 @@ enum
   PROP_0,
   PROP_SILENT,
   PROP_MODEL_PATH,
+  PROP_LABEL_PATH,
   PROP_CONF_THRESHOLD,
 };
 
@@ -89,6 +90,61 @@ static gboolean gst_yolodetection_set_caps (GstBaseTransform * trans, GstCaps * 
 static GstFlowReturn gst_yolodetection_transform_ip (GstBaseTransform *
     base, GstBuffer * outbuf);
 
+/* Helper fuction */
+// Hex (Label) to cv
+static cv::Scalar hex_to_cv_scalar(const std::string& hex_str) {
+    unsigned int hex_val = 0;
+    std::stringstream ss;
+    std::string clean_hex = (hex_str.find("0x") == 0) ? hex_str.substr(2) : hex_str;
+    ss << std::hex << clean_hex;
+    ss >> hex_val;
+    int r = 0, g = 0, b = 0;
+
+    if (clean_hex.length() == 8) {
+        r = (hex_val >> 24) & 0xFF;
+        g = (hex_val >> 16) & 0xFF;
+        b = (hex_val >> 8) & 0xFF;
+    } else if (clean_hex.length() == 6) {
+        r = (hex_val >> 16) & 0xFF;
+        g = (hex_val >> 8) & 0xFF;
+        b = hex_val & 0xFF;
+    } else {
+        return cv::Scalar(255, 0, 0);
+    }
+
+    return cv::Scalar(b, g, r);
+}
+
+// Read label file
+static gboolean gst_yolodetection_load_labels(Gstyolodetection *filter, const gchar *path) {
+    if (!path || !filter->labels) return FALSE;
+
+    try {
+        std::ifstream f(path);
+        if (!f.is_open()) {
+            GST_ERROR_OBJECT(filter, "Could not open label file: %s", path);
+            return FALSE;
+        }
+
+        nlohmann::json data = nlohmann::json::parse(f);
+        filter->labels->clear();
+
+        for (auto& item : data) {
+            YoloLabel label;
+            label.id = item["id"];
+            label.name = item["label"];
+            label.color = hex_to_cv_scalar(item["color"].get<std::string>());
+            filter->labels->push_back(label);
+        }
+
+        GST_INFO_OBJECT(filter, "Successfully loaded %lu labels from %s", filter->labels->size(), path);
+        return TRUE;
+    } catch (const std::exception& e) {
+        GST_ERROR_OBJECT(filter, "Error parsing JSON labels: %s", e.what());
+        return FALSE;
+    }
+}
+
 /* GObject vmethod implementations */
 static void
 gst_yolodetection_class_init (GstyolodetectionClass * klass)
@@ -106,10 +162,15 @@ gst_yolodetection_class_init (GstyolodetectionClass * klass)
   g_object_class_install_property (gobject_class, PROP_MODEL_PATH,
       g_param_spec_string ("model-path", "Model Path", "Path to the ONNX model file",
           NULL, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-  
+
+  g_object_class_install_property (gobject_class, PROP_LABEL_PATH,
+      g_param_spec_string ("label-path", "Label Path", "Path to the JSON label file",
+          NULL, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   g_object_class_install_property (gobject_class, PROP_CONF_THRESHOLD,
       g_param_spec_float ("conf-threshold", "Confidence Threshold", "Threshold for object detection confidence",
           0.0f, 1.0f, 0.5f, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
 
   gst_element_class_set_details_simple (gstelement_class,
       "yolodetection",
@@ -135,6 +196,8 @@ static void
 gst_yolodetection_init (Gstyolodetection * filter)
 {
   filter->model_path = NULL;
+  filter->label_path = NULL;
+  filter->labels = new std::vector<YoloLabel>(); // Vector labels
   filter->conf_threshold = 0.5f;
   filter->detector = NULL;
   filter->video_info = gst_video_info_new ();
@@ -148,6 +211,13 @@ static void gst_yolodetection_finalize (GObject * object)
 {
     Gstyolodetection *filter = GST_YOLODETECTION (object);
     g_free (filter->model_path);
+    g_free (filter->label_path);
+
+    if (filter->labels) {
+        delete filter->labels;
+        filter->labels = NULL;
+    }
+
     if(filter->detector) {
         delete filter->detector;
         filter->detector = NULL;
@@ -178,6 +248,16 @@ gst_yolodetection_set_property (GObject * object, guint prop_id,
           GST_INFO_OBJECT(filter, "Successfully loaded ONNX model.");
       }
       break;
+
+    case PROP_LABEL_PATH:
+      g_free(filter->label_path);
+      filter->label_path = g_value_dup_string(value);
+      if (filter->label_path) {
+          GST_INFO_OBJECT(filter, "Label path set to: %s", filter->label_path);
+          gst_yolodetection_load_labels(filter, filter->label_path);
+      }
+      break;
+
     case PROP_CONF_THRESHOLD:
       filter->conf_threshold = g_value_get_float (value);
       GST_INFO_OBJECT(filter, "Confidence threshold set to: %f", filter->conf_threshold);
@@ -241,13 +321,31 @@ gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
 
     // Draw detections on the frame
     for(const auto& d : detections) {
-        cv::rectangle(frame, d.box, cv::Scalar(255, 0, 0), 2);
+        cv::Scalar color(255, 0, 0);
+        std::string label_name = "Class " + std::to_string(d.class_id);
+        if (filter->labels && !filter->labels->empty()) {
+            for (const auto& l : *(filter->labels)) {
+                if (l.id == d.class_id) {
+                    color = l.color;
+                    label_name = l.name;
+                    break;
+                }
+            }
+        }
+
+        cv::rectangle(frame, d.box, color, 2);
         std::stringstream ss;
-        ss << "Class " << d.class_id << ": " << std::fixed << std::setprecision(2) << d.confidence;
-        std::string label = ss.str();
-        cv::putText(frame, label, 
-                    cv::Point(d.box.x, d.box.y - 5), 
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+        ss << label_name << " " << (int)(d.confidence * 100) << "%";
+        std::string display_text = ss.str();
+        int baseline = 0;
+        cv::Size textSize = cv::getTextSize(display_text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+        cv::rectangle(frame, 
+                      cv::Point(d.box.x, d.box.y - textSize.height - 5),
+                      cv::Point(d.box.x + textSize.width, d.box.y), 
+                      color, -1);
+        cv::putText(frame, display_text, 
+                    cv::Point(d.box.x, d.box.y - 2), 
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
     }
 
     filter->frame_count++;

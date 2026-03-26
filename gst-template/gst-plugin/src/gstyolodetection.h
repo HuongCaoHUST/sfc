@@ -29,6 +29,9 @@
 #include <onnxruntime_cxx_api.h>
 #include <vector>
 #include <string>
+#include <opencv2/opencv.hpp>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 G_BEGIN_DECLS
 
@@ -38,14 +41,22 @@ G_DECLARE_FINAL_TYPE (Gstyolodetection, gst_yolodetection,
 
 class YoloDetector;
 
+struct YoloLabel {
+    int id;
+    std::string name;
+    cv::Scalar color;
+};
+
 struct _Gstyolodetection {
   GstBaseTransform element;
 
   gchar *model_path;      /* Model path */
+  gchar *label_path;      /* Label path */
   gfloat conf_threshold;  /* Confidence threshold */
 
   YoloDetector *detector;
   GstVideoInfo *video_info;
+  std::vector<YoloLabel> *labels;
 
   GstClockTime last_time;
   guint frame_count;

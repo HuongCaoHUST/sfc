@@ -24,6 +24,7 @@ services:
       - sender
     volumes:
       - ./yolo11n.onnx:/app/yolo11n.onnx 
+      - ./labels.json:/app/labels.json 
     command: >
       gst-launch-1.0 
       udpsrc port=5000 buffer-size=2097152 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
@@ -33,7 +34,7 @@ services:
       videoconvert ! 
       video/x-raw,format=BGR !
       queue max-size-buffers=1 leaky=2 !
-      yolodetection model-path="/app/yolo11n.onnx" ! 
+      yolodetection model-path="/app/yolo11n.onnx" conf-threshold=0.3 ! 
       videoconvert ! 
       queue ! 
       x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 bitrate=2000 ! 
