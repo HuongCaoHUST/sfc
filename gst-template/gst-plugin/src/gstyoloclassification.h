@@ -48,6 +48,9 @@ struct _GstYoloClassification {
   GstClockTime last_time;
   guint frame_count;
   gdouble current_fps;
+
+  gpointer prev_frame;
+  gdouble motion_threshold;
 };
 
 G_END_DECLS

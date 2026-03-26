@@ -4,6 +4,21 @@
 #include <vector>
 
 // YoloClassifier implementation
+void softmax(float* data, int size) {
+    if (size <= 0) return;
+    float max_val = *std::max_element(data, data + size);
+    float sum = 0.0;
+    std::vector<float> exp_data(size);
+    for (int i = 0; i < size; ++i) {
+        exp_data[i] = exp(data[i] - max_val);
+        sum += exp_data[i];
+    }
+    if (sum == 0) return;
+    for (int i = 0; i < size; ++i) {
+        data[i] = exp_data[i] / sum;
+    }
+}
+
 std::vector<Classification> YoloClassifier::classify(cv::Mat& frame, float conf_threshold) {
     std::vector<Classification> results;
     if (!session) return results;
@@ -34,10 +49,12 @@ std::vector<Classification> YoloClassifier::classify(cv::Mat& frame, float conf_
         output_names_char.data(), 1
     );
 
-    const float* raw_data = output_tensors[0].GetTensorData<float>();
+    float* raw_data = output_tensors[0].GetTensorMutableData<float>();
     auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
     
     int num_classes = (int)output_shape[1];
+
+    softmax(raw_data, num_classes);
     
     for (int i = 0; i < num_classes; ++i) {
         if (raw_data[i] > conf_threshold) {
@@ -52,6 +69,10 @@ std::vector<Classification> YoloClassifier::classify(cv::Mat& frame, float conf_
     std::sort(results.begin(), results.end(), [](const Classification& a, const Classification& b) {
         return a.confidence > b.confidence;
     });
+
+    if (results.size() > 3) {
+        results.resize(3);
+    }
 
     return results; 
 }

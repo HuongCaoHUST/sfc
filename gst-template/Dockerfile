@@ -12,11 +12,12 @@ RUN apt-get update && apt-get install -y \
     libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY builddir/gst-plugin/libgstmyfilter.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+# COPY builddir/gst-plugin/libgstmyfilter.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY builddir/gst-plugin/libgstyolodetection.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+COPY builddir/gst-plugin/libgstyoloclassification.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY libs/libonnxruntime.so.1.14.0 /usr/lib/
 COPY libs/libonnxruntime.so /usr/lib/
 
 ENV GST_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 
-CMD ["gst-inspect-1.0", "myfilter"]
+CMD ["gst-inspect-1.0", "yoloclassification"]
