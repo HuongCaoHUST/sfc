@@ -31,3 +31,17 @@ gstmyfilterexample = library('gstmyfilter',
   install : true,
   install_dir : plugins_install_dir,
 )
+
+# Plugin gstyolodetection
+gstyolodetection_sources = [
+  'src/gstyolodetection.cpp',
+  'src/yolo_engine.cpp'
+  ]
+
+gstyolodetectionexample = library('gstyolodetection',
+  gstyolodetection_sources,
+  cpp_args: plugin_c_args,
+  dependencies : [gst_dep, gstbase_dep, gstvideo_dep, opencv_dep, onnx_lib],
+  install : true,
+  install_dir : plugins_install_dir,
+)

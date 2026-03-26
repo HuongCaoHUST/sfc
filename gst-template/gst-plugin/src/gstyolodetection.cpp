@@ -1,18 +1,57 @@
+/*
+ * GStreamer
+ * Copyright (C) 2006 Stefan Kost <ensonic@users.sf.net>
+ * Copyright (C) 2026 HuongCao <<user@hostname.org>>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
+/**
+ * SECTION:element-yolodetection
+ *
+ * FIXME:Describe yolodetection here.
+ *
+ * <refsect2>
+ * <title>Example launch line</title>
+ * |[
+ * gst-launch -v -m fakesrc ! yolodetection ! fakesink silent=TRUE
+ * ]|
+ * </refsect2>
+ */
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
-#include "gstmyfilter.h"
+#include <gst/gst.h>
+#include <gst/base/base.h>
+#include <gst/controller/controller.h>
+
+#include "gstyolodetection.h"
 #include "yolo_engine.h"
 #include <sstream>
 #include <iomanip>
 
-GST_DEBUG_CATEGORY_STATIC (gst_myfilter_debug);
-#define GST_CAT_DEFAULT gst_myfilter_debug
+GST_DEBUG_CATEGORY_STATIC (gst_yolodetection_debug);
+#define GST_CAT_DEFAULT gst_yolodetection_debug
 
 enum
 {
   PROP_0,
+  PROP_SILENT,
   PROP_MODEL_PATH,
   PROP_CONF_THRESHOLD,
 };
@@ -35,56 +74,65 @@ static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_STATIC_CAPS (SUPPORTED_CAPS)
     );
 
-#define gst_myfilter_parent_class parent_class
-G_DEFINE_TYPE (Gstmyfilter, gst_myfilter, GST_TYPE_BASE_TRANSFORM);
-GST_ELEMENT_REGISTER_DEFINE (myfilter, "myfilter", GST_RANK_NONE,
-    GST_TYPE_MYFILTER);
+#define gst_yolodetection_parent_class parent_class
+G_DEFINE_TYPE (Gstyolodetection, gst_yolodetection, GST_TYPE_BASE_TRANSFORM);
+GST_ELEMENT_REGISTER_DEFINE (yolodetection, "yolodetection", GST_RANK_NONE,
+    GST_TYPE_YOLODETECTION);
 
-static void gst_myfilter_set_property (GObject * object,
+static void gst_yolodetection_set_property (GObject * object,
     guint prop_id, const GValue * value, GParamSpec * pspec);
-static void gst_myfilter_get_property (GObject * object,
+static void gst_yolodetection_get_property (GObject * object,
     guint prop_id, GValue * value, GParamSpec * pspec);
-static void gst_myfilter_finalize (GObject * object);
-static gboolean gst_myfilter_set_caps (GstBaseTransform * trans, GstCaps * incaps, GstCaps * outcaps);
-static GstFlowReturn gst_myfilter_transform_ip (GstBaseTransform *
+static void gst_yolodetection_finalize (GObject * object);
+static gboolean gst_yolodetection_set_caps (GstBaseTransform * trans, GstCaps * incaps, GstCaps * outcaps);
+
+static GstFlowReturn gst_yolodetection_transform_ip (GstBaseTransform *
     base, GstBuffer * outbuf);
 
+/* GObject vmethod implementations */
 static void
-gst_myfilter_class_init (GstmyfilterClass * klass)
+gst_yolodetection_class_init (GstyolodetectionClass * klass)
 {
-  GObjectClass *gobject_class = (GObjectClass *) klass;
-  GstElementClass *gstelement_class = (GstElementClass *) klass;
+  GObjectClass *gobject_class;
+  GstElementClass *gstelement_class;
 
-  gobject_class->set_property = gst_myfilter_set_property;
-  gobject_class->get_property = gst_myfilter_get_property;
-  gobject_class->finalize = gst_myfilter_finalize;
+  gobject_class = (GObjectClass *) klass;
+  gstelement_class = (GstElementClass *) klass;
+
+  gobject_class->set_property = gst_yolodetection_set_property;
+  gobject_class->get_property = gst_yolodetection_get_property;
+  gobject_class->finalize = gst_yolodetection_finalize;
 
   g_object_class_install_property (gobject_class, PROP_MODEL_PATH,
       g_param_spec_string ("model-path", "Model Path", "Path to the ONNX model file",
           NULL, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-
+  
   g_object_class_install_property (gobject_class, PROP_CONF_THRESHOLD,
       g_param_spec_float ("conf-threshold", "Confidence Threshold", "Threshold for object detection confidence",
           0.0f, 1.0f, 0.5f, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   gst_element_class_set_details_simple (gstelement_class,
-      "YOLO ONNX Filter",
-      "Filter/Video",
-      "Performs YOLO object detection using an ONNX model", "HuongCao <<user@hostname.org>>");
+      "yolodetection",
+      "Generic/Filter",
+      "Performs YOLO object detection using an ONNX model", "HuongCao <<huongcao.seee@gmail.com>>");
 
   gst_element_class_add_pad_template (gstelement_class,
       gst_static_pad_template_get (&src_template));
   gst_element_class_add_pad_template (gstelement_class,
       gst_static_pad_template_get (&sink_template));
+  
+  GST_BASE_TRANSFORM_CLASS (klass)->set_caps = 
+      GST_DEBUG_FUNCPTR (gst_yolodetection_set_caps);
+  GST_BASE_TRANSFORM_CLASS (klass)->transform_ip =
+      GST_DEBUG_FUNCPTR (gst_yolodetection_transform_ip);
 
-  GST_BASE_TRANSFORM_CLASS (klass)->set_caps = GST_DEBUG_FUNCPTR (gst_myfilter_set_caps);
-  GST_BASE_TRANSFORM_CLASS (klass)->transform_ip = GST_DEBUG_FUNCPTR (gst_myfilter_transform_ip);
-
-  GST_DEBUG_CATEGORY_INIT (gst_myfilter_debug, "myfilter", 0, "YOLO ONNX Filter");
+  GST_DEBUG_CATEGORY_INIT (gst_yolodetection_debug, "yolodetection", 0,
+      "Template yolodetection");
 }
 
+/* initialize the element */
 static void
-gst_myfilter_init (Gstmyfilter * filter)
+gst_yolodetection_init (Gstyolodetection * filter)
 {
   filter->model_path = NULL;
   filter->conf_threshold = 0.5f;
@@ -96,9 +144,9 @@ gst_myfilter_init (Gstmyfilter * filter)
   filter->current_fps = 0.0;
 }
 
-static void gst_myfilter_finalize (GObject * object)
+static void gst_yolodetection_finalize (GObject * object)
 {
-    Gstmyfilter *filter = GST_MYFILTER (object);
+    Gstyolodetection *filter = GST_YOLODETECTION (object);
     g_free (filter->model_path);
     if(filter->detector) {
         delete filter->detector;
@@ -110,10 +158,10 @@ static void gst_myfilter_finalize (GObject * object)
 }
 
 static void
-gst_myfilter_set_property (GObject * object, guint prop_id,
+gst_yolodetection_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec)
 {
-  Gstmyfilter *filter = GST_MYFILTER (object);
+  Gstyolodetection *filter = GST_YOLODETECTION (object);
 
   switch (prop_id) {
     case PROP_MODEL_PATH:
@@ -141,10 +189,10 @@ gst_myfilter_set_property (GObject * object, guint prop_id,
 }
 
 static void
-gst_myfilter_get_property (GObject * object, guint prop_id,
+gst_yolodetection_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * pspec)
 {
-  Gstmyfilter *filter = GST_MYFILTER (object);
+  Gstyolodetection *filter = GST_YOLODETECTION (object);
 
   switch (prop_id) {
     case PROP_MODEL_PATH:
@@ -159,9 +207,9 @@ gst_myfilter_get_property (GObject * object, guint prop_id,
   }
 }
 
-static gboolean gst_myfilter_set_caps (GstBaseTransform * trans, GstCaps * incaps, GstCaps * outcaps)
+static gboolean gst_yolodetection_set_caps (GstBaseTransform * trans, GstCaps * incaps, GstCaps * outcaps)
 {
-    Gstmyfilter *filter = GST_MYFILTER (trans);
+    Gstyolodetection *filter = GST_YOLODETECTION (trans);
     if (!gst_video_info_from_caps (filter->video_info, incaps)) {
         GST_ERROR_OBJECT (filter, "Failed to parse video caps");
         return FALSE;
@@ -169,10 +217,11 @@ static gboolean gst_myfilter_set_caps (GstBaseTransform * trans, GstCaps * incap
     return TRUE;
 }
 
+/* GstBaseTransform vmethod implementations */
 static GstFlowReturn
-gst_myfilter_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
+gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
 {
-  Gstmyfilter *filter = GST_MYFILTER (base);
+  Gstyolodetection *filter = GST_YOLODETECTION (base);
   GstMapInfo map;
 
   if (!filter->detector) {
@@ -231,17 +280,21 @@ gst_myfilter_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
   return GST_FLOW_OK;
 }
 
+
+/* entry point to initialize the plug-in
+ * initialize the plug-in itself
+ * register the element factories and other features
+ */
 extern "C" {
-  static gboolean myfilter_init (GstPlugin * plugin) {
-    return GST_ELEMENT_REGISTER (myfilter, plugin);
+  static gboolean yolodetection_init (GstPlugin * plugin) {
+    return GST_ELEMENT_REGISTER (yolodetection, plugin);
   }
 
-  GST_PLUGIN_DEFINE (
-      GST_VERSION_MAJOR,
+  GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
       GST_VERSION_MINOR,
-      myfilter,
-      "YOLO ONNX Filter",
-      myfilter_init,
+      yolodetection,
+      "YOLO ONNX DETECTION",
+      yolodetection_init,
       "1.0", "LGPL", "GStreamer", "https://gstreamer.net"
   )
 }
