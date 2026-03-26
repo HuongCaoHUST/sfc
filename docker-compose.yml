@@ -33,7 +33,7 @@ services:
       videoconvert ! 
       video/x-raw,format=BGR !
       queue max-size-buffers=1 leaky=2 !
-      myfilter model-path="/app/yolo11n.onnx" ! 
+      yolodetection model-path="/app/yolo11n.onnx" ! 
       videoconvert ! 
       queue ! 
       x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 bitrate=2000 ! 
