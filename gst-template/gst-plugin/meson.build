@@ -20,7 +20,7 @@ onnx_inc = include_directories('/usr/local/include')
 # The myfilter Plugin
 gstmyfilter_sources = [
   'src/gstmyfilter.cpp',
-  'src/yolo_detection.cpp'
+  'src/yolo_engine.cpp'
   ]
 
 gstmyfilterexample = library('gstmyfilter',
