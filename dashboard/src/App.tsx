@@ -3,37 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
-import { Camera, Activity, Shield, Settings, AlertCircle } from 'lucide-react';
-
-declare const Hls: any;
-
-interface BoundingBox {
-  label: string;
-  conf: number;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-interface CameraData {
-  camera_id: string;
-  video_width: number;
-  video_height: number;
-  boxes: BoundingBox[];
-}
+import React, { useEffect, useState } from 'react';
+import { Shield, Settings } from 'lucide-react';
 
 const CAMERAS = [
-  { id: 'cam1', name: 'Cổng chính (Main Gate)', url: 'http://127.0.0.1:8888/cam1/index.m3u8' },
+  { id: 'cam1', name: 'Cổng chính (Main Gate)', url: 'http://127.0.0.1:8889/cam1' },
   { id: 'cam2', name: 'Bãi đỗ xe (Parking Lot)', url: '' },
   { id: 'cam3', name: 'Hành lang tầng 1 (Hallway L1)', url: '' },
   { id: 'cam4', name: 'Kho hàng (Warehouse)', url: '' },
 ];
 
 export default function App() {
-  const containerRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
-  const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({});
   const [maximizedCam, setMaximizedCam] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -51,30 +31,6 @@ export default function App() {
       setMaximizedCam(camId);
     }
   };
-
-  useEffect(() => {
-    const hlsInstances: Hls[] = [];
-
-    CAMERAS.forEach(cam => {
-      const video = videoRefs.current[cam.id];
-      if (video && cam.url) {
-        if (Hls.isSupported()) {
-          const hls = new Hls();
-          hls.loadSource(cam.url);
-          hls.attachMedia(video);
-          hlsInstances.push(hls);
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = cam.url;
-        }
-      }
-    });
-
-    return () => {
-      hlsInstances.forEach(hls => {
-        hls.destroy();
-      });
-    };
-  }, []);
 
   return (
     <div className="min-h-screen bg-[#050505] text-white font-sans flex items-center justify-center p-0 md:p-4">
@@ -121,15 +77,18 @@ export default function App() {
 
               {/* Video & Canvas Layer */}
               <div className="relative flex-1 flex items-center justify-center overflow-hidden">
-                <video
-                  ref={el => videoRefs.current[cam.id] = el}
-                  className="w-full h-full object-cover md:object-contain"
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
-                >
-                </video>
+                {cam.url ? (
+                  <iframe
+                    src={cam.url}
+                    className="w-full h-full border-0"
+                    allow="autoplay; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                  ></iframe>
+                ) : (
+                  <div className="w-full h-full bg-black flex items-center justify-center">
+                    <span className="text-gray-500 text-xs font-mono">NO SIGNAL</span>
+                  </div>
+                )}
               </div>
 
               {/* Bottom Bar */}
@@ -138,8 +97,8 @@ export default function App() {
                   {currentTime.toLocaleTimeString()}
                 </div>
                 <div className="flex gap-2">
-                  <div className="px-1.5 py-0.5 bg-black/50 rounded text-[8px] font-mono text-green-500 border border-green-500/30">
-                    H.264
+                  <div className="px-1.5 py-0.5 bg-black/50 rounded text-[8px] font-mono text-blue-400 border border-blue-400/30">
+                    WebRTC
                   </div>
                 </div>
               </div>
