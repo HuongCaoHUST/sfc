@@ -297,15 +297,29 @@ gst_yolojsonoverlay_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
   GstClockTime frame_pts = GST_BUFFER_PTS(outbuf);
   std::string matched_json = "";
 
-  // 1. Chờ dữ liệu JSON (Tối đa 40ms)
   {
       std::unique_lock<std::mutex> lock(ctx->map_mutex);
-      bool found = ctx->cv.wait_for(lock, std::chrono::milliseconds(40), 
-          [&]() { return ctx->json_buffer.find(frame_pts) != ctx->json_buffer.end(); }
-      );
+      ctx->cv.wait_for(lock, std::chrono::milliseconds(50));
 
-      if (found) {
-          matched_json = ctx->json_buffer[frame_pts];
+      if (!ctx->json_buffer.empty()) {
+          auto it = ctx->json_buffer.lower_bound(frame_pts);
+          
+          GstClockTime diff = GST_CLOCK_TIME_NONE;
+          
+          if (it != ctx->json_buffer.end()) {
+              diff = (it->first > frame_pts) ? (it->first - frame_pts) : (frame_pts - it->first);
+              if (diff < (100 * GST_MSECOND)) {
+                  matched_json = it->second;
+              }
+          }
+
+          if (matched_json.empty() && it != ctx->json_buffer.begin()) {
+              auto it_prev = std::prev(it);
+              diff = (frame_pts > it_prev->first) ? (frame_pts - it_prev->first) : (it_prev->first - frame_pts);
+              if (diff < (100 * GST_MSECOND)) {
+                  matched_json = it_prev->second;
+              }
+          }
       }
   }
 
