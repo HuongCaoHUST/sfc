@@ -45,6 +45,14 @@
 #include <sstream>
 #include <iomanip>
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <cstring>
+
 GST_DEBUG_CATEGORY_STATIC (gst_yolodetection_debug);
 #define GST_CAT_DEFAULT gst_yolodetection_debug
 
@@ -142,11 +150,22 @@ gst_yolodetection_init (Gstyolodetection * filter)
   filter->last_time = GST_CLOCK_TIME_NONE;
   filter->frame_count = 0;
   filter->current_fps = 0.0;
+
+  // UDP Socket
+  filter->udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+  filter->addr_resolved = FALSE;
+  memset(&filter->dest_addr, 0, sizeof(filter->dest_addr));
 }
 
 static void gst_yolodetection_finalize (GObject * object)
 {
     Gstyolodetection *filter = GST_YOLODETECTION (object);
+
+    // Close UDP Socket
+    if (filter->udp_sock >= 0) {
+        close(filter->udp_sock);
+    }
+
     g_free (filter->model_path);
     if(filter->detector) {
         delete filter->detector;
@@ -239,15 +258,59 @@ gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
     // Perform detection
     auto detections = filter->detector->detect(frame, filter->conf_threshold);
 
-    // Draw detections on the frame
-    for(const auto& d : detections) {
-        cv::rectangle(frame, d.box, cv::Scalar(255, 0, 0), 2);
-        std::stringstream ss;
-        ss << "Class " << d.class_id << ": " << std::fixed << std::setprecision(2) << d.confidence;
-        std::string label = ss.str();
-        cv::putText(frame, label, 
-                    cv::Point(d.box.x, d.box.y - 5), 
-                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+    std::stringstream json_ss;
+    json_ss << "{\n  \"predictions\": [\n";
+    for(size_t i = 0; i < detections.size(); ++i) {
+        const auto& d = detections[i];
+        std::string class_name = "Class_" + std::to_string(d.class_id); 
+        
+        std::string detection_id = "uuid-" + std::to_string(filter->frame_count) + "-" + std::to_string(i);
+
+        json_ss << "    {\n"
+                << "      \"x\": " << d.box.x << ",\n"
+                << "      \"y\": " << d.box.y << ",\n"
+                << "      \"width\": " << d.box.width << ",\n"
+                << "      \"height\": " << d.box.height << ",\n"
+                << "      \"confidence\": " << std::fixed << std::setprecision(3) << d.confidence << ",\n"
+                << "      \"class\": \"" << class_name << "\",\n"
+                << "      \"class_id\": " << d.class_id << ",\n"
+                << "      \"detection_id\": \"" << detection_id << "\"\n"
+                << "    }";
+
+        if (i < detections.size() - 1) {
+            json_ss << ",";
+        }
+        json_ss << "\n";
+    }
+    json_ss << "  ]\n}";
+    std::string final_json_string = json_ss.str();
+
+    if (filter->udp_sock >= 0) {
+        if (!filter->addr_resolved) {
+            struct addrinfo hints, *res;
+            memset(&hints, 0, sizeof(hints));
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_DGRAM;
+
+            int err = getaddrinfo("127.0.0.1", "5002", &hints, &res);
+            if (err == 0) {
+                memcpy(&filter->dest_addr, res->ai_addr, res->ai_addrlen);
+                filter->addr_resolved = TRUE;
+                freeaddrinfo(res);
+                GST_INFO_OBJECT(filter, "Resolved 'receiver' IP address successfully.");
+            } else {
+                GST_WARNING_OBJECT(filter, "Could not resolve hostname 'receiver': %s", gai_strerror(err));
+            }
+        }
+
+        if (filter->addr_resolved) {
+            sendto(filter->udp_sock, 
+                   final_json_string.c_str(), 
+                   final_json_string.length(), 
+                   0,
+                   (struct sockaddr *)&filter->dest_addr, 
+                   sizeof(filter->dest_addr));
+        }
     }
 
     filter->frame_count++;
@@ -259,19 +322,10 @@ gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
         GstClockTime diff = current_time - filter->last_time;
         if (diff >= GST_SECOND) {
             filter->current_fps = (double)filter->frame_count * GST_SECOND / diff;
+            GST_INFO_OBJECT(filter, "FPS: %.1f", filter->current_fps); // Ghi log
             filter->frame_count = 0;
             filter->last_time = current_time;
         }
-    }
-
-    if (filter->current_fps > 0) {
-        std::stringstream fps_ss;
-        fps_ss << "FPS: " << std::fixed << std::setprecision(1) << filter->current_fps;
-        cv::putText(frame, fps_ss.str(), 
-                    cv::Point(15, 35),
-                    cv::FONT_HERSHEY_SIMPLEX, 1.0, 
-                    cv::Scalar(0, 255, 0),
-                    2);
     }
 
     gst_buffer_unmap (outbuf, &map);

@@ -29,6 +29,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <vector>
 #include <string>
+#include <netinet/in.h>
 
 G_BEGIN_DECLS
 
@@ -50,6 +51,10 @@ struct _Gstyolodetection {
   GstClockTime last_time;
   guint frame_count;
   gdouble current_fps;
+  
+  int udp_sock;
+  struct sockaddr_in dest_addr;
+  gboolean addr_resolved;
 };
 
 G_END_DECLS
