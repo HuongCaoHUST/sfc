@@ -1,0 +1,7 @@
+{
+  "name": "AI Surveillance Dashboard",
+  "description": "Real-time AI video surveillance monitoring with YOLO bounding box overlays.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
