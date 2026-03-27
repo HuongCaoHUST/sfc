@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, Activity, Shield, Settings, Maximize2, AlertCircle } from 'lucide-react';
+import { Camera, Activity, Shield, Settings, AlertCircle } from 'lucide-react';
 
 declare const Hls: any;
 
@@ -107,6 +107,7 @@ export default function App() {
             <div 
               key={cam.id}
               className={`relative group bg-black flex flex-col min-h-[250px] md:min-h-0 ${maximizedCam && maximizedCam !== cam.id ? 'hidden' : ''}`}
+              onDoubleClick={() => handleMaximize(cam.id)}
             >
               {/* Camera Info Overlay */}
               <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/90 to-transparent z-20 flex justify-between items-center pointer-events-none">
@@ -116,10 +117,6 @@ export default function App() {
                     {cam.id.toUpperCase()} // {cam.name}
                   </span>
                 </div>
-                <Maximize2 
-                  className="w-4 h-4 text-white/40 pointer-events-auto cursor-pointer hover:text-white transition-colors" 
-                  onClick={() => handleMaximize(cam.id)}
-                />
               </div>
 
               {/* Video & Canvas Layer */}
