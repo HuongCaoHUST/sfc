@@ -294,8 +294,13 @@ gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
     // Perform detection
     auto detections = filter->detector->detect(frame, filter->conf_threshold);
 
+    GstClockTime current_pts = GST_BUFFER_PTS(outbuf);
+    guint64 pts_val = (current_pts == GST_CLOCK_TIME_NONE) ? 0 : (guint64)current_pts;
+
     std::stringstream json_ss;
-    json_ss << "{\n  \"predictions\": [\n";
+    json_ss << "{\n";
+    json_ss << "  \"pts\": " << pts_val << ",\n";
+    json_ss << "  \"predictions\": [\n";
     for(size_t i = 0; i < detections.size(); ++i) {
         const auto& d = detections[i];
         std::string class_name = "Class_" + std::to_string(d.class_id); 
