@@ -62,6 +62,8 @@ enum
   PROP_SILENT,
   PROP_MODEL_PATH,
   PROP_CONF_THRESHOLD,
+  PROP_DEST_HOST,
+  PROP_DEST_PORT
 };
 
 #define SUPPORTED_CAPS "video/x-raw, " \
@@ -119,6 +121,14 @@ gst_yolodetection_class_init (GstyolodetectionClass * klass)
       g_param_spec_float ("conf-threshold", "Confidence Threshold", "Threshold for object detection confidence",
           0.0f, 1.0f, 0.5f, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property (gobject_class, PROP_DEST_HOST,
+      g_param_spec_string ("dest-host", "Destination Host", "Destination IP or hostname for JSON UDP stream",
+          "127.0.0.1", (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_DEST_PORT,
+      g_param_spec_int ("dest-port", "Destination Port", "Destination port for JSON UDP stream",
+          1, 65535, 5002, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));      
+
   gst_element_class_set_details_simple (gstelement_class,
       "yolodetection",
       "Generic/Filter",
@@ -151,6 +161,9 @@ gst_yolodetection_init (Gstyolodetection * filter)
   filter->frame_count = 0;
   filter->current_fps = 0.0;
 
+  filter->dest_host = g_strdup("127.0.0.1");
+  filter->dest_port = 5002;
+
   // UDP Socket
   filter->udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
   filter->addr_resolved = FALSE;
@@ -167,6 +180,8 @@ static void gst_yolodetection_finalize (GObject * object)
     }
 
     g_free (filter->model_path);
+    g_free (filter->dest_host);
+
     if(filter->detector) {
         delete filter->detector;
         filter->detector = NULL;
@@ -204,6 +219,19 @@ gst_yolodetection_set_property (GObject * object, guint prop_id,
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
+
+    case PROP_DEST_HOST:
+      g_free(filter->dest_host);
+      filter->dest_host = g_value_dup_string(value);
+      filter->addr_resolved = FALSE;
+      GST_INFO_OBJECT(filter, "Destination host set to: %s", filter->dest_host);
+      break;
+
+    case PROP_DEST_PORT:
+      filter->dest_port = g_value_get_int(value);
+      filter->addr_resolved = FALSE;
+      GST_INFO_OBJECT(filter, "Destination port set to: %d", filter->dest_port);
+      break;
   }
 }
 
@@ -222,6 +250,14 @@ gst_yolodetection_get_property (GObject * object, guint prop_id,
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+
+    case PROP_DEST_HOST:
+      g_value_set_string(value, filter->dest_host);
+      break;
+      
+    case PROP_DEST_PORT:
+      g_value_set_int(value, filter->dest_port);
       break;
   }
 }
@@ -292,14 +328,15 @@ gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
             hints.ai_family = AF_INET;
             hints.ai_socktype = SOCK_DGRAM;
 
-            int err = getaddrinfo("127.0.0.1", "5002", &hints, &res);
+            std::string port_str = std::to_string(filter->dest_port);
+            int err = getaddrinfo(filter->dest_host, port_str.c_str(), &hints, &res);
             if (err == 0) {
                 memcpy(&filter->dest_addr, res->ai_addr, res->ai_addrlen);
                 filter->addr_resolved = TRUE;
                 freeaddrinfo(res);
-                GST_INFO_OBJECT(filter, "Resolved 'receiver' IP address successfully.");
+                GST_INFO_OBJECT(filter, "Resolved '%s:%d' successfully.", filter->dest_host, filter->dest_port);
             } else {
-                GST_WARNING_OBJECT(filter, "Could not resolve hostname 'receiver': %s", gai_strerror(err));
+                GST_WARNING_OBJECT(filter, "Could not resolve hostname '%s': %s", filter->dest_host, gai_strerror(err));
             }
         }
 

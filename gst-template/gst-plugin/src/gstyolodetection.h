@@ -44,6 +44,9 @@ struct _Gstyolodetection {
 
   gchar *model_path;      /* Model path */
   gfloat conf_threshold;  /* Confidence threshold */
+  
+  gchar *dest_host;       /* UDP Destination Host/IP */
+  gint dest_port;         /* UDP Destination Port */
 
   YoloDetector *detector;
   GstVideoInfo *video_info;
@@ -51,7 +54,7 @@ struct _Gstyolodetection {
   GstClockTime last_time;
   guint frame_count;
   gdouble current_fps;
-  
+
   int udp_sock;
   struct sockaddr_in dest_addr;
   gboolean addr_resolved;
