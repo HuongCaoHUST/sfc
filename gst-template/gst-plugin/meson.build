@@ -45,3 +45,16 @@ gstyolodetectionexample = library('gstyolodetection',
   install : true,
   install_dir : plugins_install_dir,
 )
+
+# Plugin yolojsonoverlay
+gstyolojsonoverlay_sources = [
+  'src/gstyolojsonoverlay.cpp'
+]
+
+gstyolojsonoverlay_plugin = library('gstyolojsonoverlay',
+  gstyolojsonoverlay_sources,
+  cpp_args: plugin_c_args,
+  dependencies : [gst_dep, gstbase_dep, gstvideo_dep, opencv_dep],
+  install : true,
+  install_dir : plugins_install_dir,
+)
