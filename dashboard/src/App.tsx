@@ -34,6 +34,23 @@ const CAMERAS = [
 export default function App() {
   const containerRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({});
+  const [maximizedCam, setMaximizedCam] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const handleMaximize = (camId: string) => {
+    if (maximizedCam === camId) {
+      setMaximizedCam(null);
+    } else {
+      setMaximizedCam(camId);
+    }
+  };
 
   useEffect(() => {
     const hlsInstances: Hls[] = [];
@@ -85,11 +102,11 @@ export default function App() {
         </header>
 
         {/* Camera Grid - Tự động lấp đầy không gian còn lại */}
-        <main className="flex-1 grid grid-cols-1 md:grid-cols-2 md:grid-rows-2 gap-px md:gap-1 bg-[#1a1a1a] overflow-y-auto md:overflow-hidden">
+        <main className={`flex-1 grid gap-px md:gap-1 bg-[#1a1a1a] overflow-y-auto md:overflow-hidden ${maximizedCam ? 'grid-cols-1 grid-rows-1' : 'grid-cols-1 md:grid-cols-2 md:grid-rows-2'}`}>
           {CAMERAS.map((cam) => (
             <div 
               key={cam.id}
-              className="relative group bg-black flex flex-col min-h-[250px] md:min-h-0"
+              className={`relative group bg-black flex flex-col min-h-[250px] md:min-h-0 ${maximizedCam && maximizedCam !== cam.id ? 'hidden' : ''}`}
             >
               {/* Camera Info Overlay */}
               <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/90 to-transparent z-20 flex justify-between items-center pointer-events-none">
@@ -99,7 +116,10 @@ export default function App() {
                     {cam.id.toUpperCase()} // {cam.name}
                   </span>
                 </div>
-                <Maximize2 className="w-4 h-4 text-white/40 pointer-events-auto cursor-pointer hover:text-white transition-colors" />
+                <Maximize2 
+                  className="w-4 h-4 text-white/40 pointer-events-auto cursor-pointer hover:text-white transition-colors" 
+                  onClick={() => handleMaximize(cam.id)}
+                />
               </div>
 
               {/* Video & Canvas Layer */}
@@ -118,7 +138,7 @@ export default function App() {
               {/* Bottom Bar */}
               <div className="absolute bottom-0 left-0 right-0 p-2 flex justify-between items-center bg-gradient-to-t from-black/60 to-transparent pointer-events-none">
                 <div className="text-[9px] font-mono text-white/50">
-                  {new Date().toLocaleTimeString()}
+                  {currentTime.toLocaleTimeString()}
                 </div>
                 <div className="flex gap-2">
                   <div className="px-1.5 py-0.5 bg-black/50 rounded text-[8px] font-mono text-green-500 border border-green-500/30">
