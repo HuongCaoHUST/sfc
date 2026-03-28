@@ -8,8 +8,8 @@ import { Shield, Settings, WifiOff } from 'lucide-react';
 
 const CAMERAS = [
   { id: 'cam1', name: 'WEBCAM AI', url: 'http://127.0.0.1:8889/cam1' },
-  { id: 'cam2', name: 'Bãi đỗ xe (Parking Lot)', url: '' },
-  { id: 'cam3', name: 'Hành lang tầng 1 (Hallway L1)', url: '' },
+  { id: 'cam2', name: 'Bãi đỗ xe (Parking Lot)', url: 'http://127.0.0.1:8889/cam2' },
+  { id: 'cam3', name: 'Hành lang tầng 1 (Hallway L1)', url: 'http://127.0.0.1:8889/cam3' },
   { id: 'cam4', name: 'Kho hàng (Warehouse)', url: '' },
 ];
 
@@ -26,6 +26,7 @@ interface AIInference {
 }
 
 interface AIResponse {
+  camera_id: string;
   predictions: AIInference[];
 }
 
@@ -34,7 +35,7 @@ const AI_CONTAINER_WS_URL = `ws://${window.location.host}`;
 // ==========================================
 // COMPONENT: Xử lý WebRTC & AI Bounding Box
 // ==========================================
-const WebRTCCamera = ({ streamUrl }: { streamUrl: string }) => {
+const WebRTCCamera = ({ streamUrl, camId }: { streamUrl: string; camId: string }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -106,12 +107,11 @@ const WebRTCCamera = ({ streamUrl }: { streamUrl: string }) => {
       ws.onmessage = (event) => {
         try {
           const data: AIResponse = JSON.parse(event.data);
-          console.log("📦 RAW JSON TỪ AI:", data);
-          if (data && data.predictions) {
+          console.log("RAW JSON:", data);
+          if (data && data.camera_id === camId) {
             setPredictions(data.predictions);
           }
         } catch (e) {
-          // Bỏ qua lỗi parse nếu có frame bị hỏng
         }
       };
 
@@ -132,7 +132,7 @@ const WebRTCCamera = ({ streamUrl }: { streamUrl: string }) => {
     return () => {
       wsRef.current?.close();
     };
-  }, []);
+  }, [camId]);
 
   // 3. Vẽ Bounding Box
   useEffect(() => {
@@ -293,7 +293,7 @@ export default function App() {
 
               <div className="relative flex-1 flex items-center justify-center overflow-hidden">
                 {cam.url ? (
-                  <WebRTCCamera streamUrl={cam.url} />
+                  <WebRTCCamera streamUrl={cam.url} camId={cam.id} />
                 ) : (
                   <div className="w-full h-full bg-black flex items-center justify-center">
                     <span className="text-gray-500 text-xs font-mono">NO SIGNAL</span>
