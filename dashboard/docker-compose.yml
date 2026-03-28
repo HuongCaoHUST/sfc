@@ -22,7 +22,7 @@ services:
       - .:/app
     working_dir: /app
     command: >
-      gst-launch-1.0 filesrc location=test_video.mp4 ! 
+      gst-launch-1.0 filesrc location=test_video_2.mp4 ! 
       qtdemux ! 
       h264parse ! 
       avdec_h264 ! 
@@ -44,12 +44,13 @@ services:
       - .:/app
     working_dir: /app
     command: >
-      gst-launch-1.0 filesrc location=test_video_2.mp4 ! 
+      gst-launch-1.0 filesrc location=test_video.mp4 ! 
       qtdemux ! 
       h264parse ! 
       avdec_h264 ! 
       videoconvert ! 
       videorate ! video/x-raw,framerate=25/1 !
+      identity sync=true !
       x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! 
       h264parse ! 
       rtspclientsink location=rtsp://media_server:8554/cam3
@@ -79,26 +80,26 @@ services:
     networks:
       - video_net
 
-  # ai_detection_2:
-  #   image: gst-myfilter-opencv:latest
-  #   container_name: ai_detection_2
-  #   depends_on:
-  #     - sender
-  #   volumes:
-  #     - ./yolo11n.onnx:/app/yolo11n.onnx 
-  #   environment:
-  #     - GST_DEBUG=4
-  #     - GST_DEBUG_DUMP_DOT_DIR=/tmp/gst
-  #   command: >
-  #     sh -c "
-  #     gst-launch-1.0
-  #     udpsrc port=5000 buffer-size=2097152 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
-  #     rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=10/1 ! queue max-size-buffers=1 leaky=downstream !
-  #     yolodetection model-path="/app/yolo11n.onnx" conf-threshold=0.2 dest-host="ai-dashboard" dest-port=5102 ! 
-  #     fakesink sync=false
-  #     "
-  #   networks:
-  #     - video_net
+  ai_detection_2:
+    image: gst-myfilter-opencv:latest
+    container_name: ai_detection_2
+    depends_on:
+      - sender
+    volumes:
+      - ./yolo11n.onnx:/app/yolo11n.onnx 
+    environment:
+      - GST_DEBUG=4
+      - GST_DEBUG_DUMP_DOT_DIR=/tmp/gst
+    command: >
+      sh -c "
+      gst-launch-1.0
+      udpsrc port=5000 buffer-size=2097152 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
+      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=25/1 ! queue max-size-buffers=5 leaky=downstream !
+      yolodetection model-path="/app/yolo11n.onnx" conf-threshold=0.2 dest-host="ai-dashboard" dest-port=5102 ! 
+      fakesink sync=false
+      "
+    networks:
+      - video_net
 
   mediamtx:
     image: bluenviron/mediamtx
