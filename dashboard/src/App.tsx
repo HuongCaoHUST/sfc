@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { Shield, Settings } from 'lucide-react';
 
 const CAMERAS = [
-  { id: 'cam1', name: 'Cổng chính (Main Gate)', url: 'http://127.0.0.1:8889/cam1' },
+  { id: 'cam1', name: 'WEBCAM', url: 'http://127.0.0.1:8889/cam1' },
   { id: 'cam2', name: 'Bãi đỗ xe (Parking Lot)', url: '' },
   { id: 'cam3', name: 'Hành lang tầng 1 (Hallway L1)', url: '' },
   { id: 'cam4', name: 'Kho hàng (Warehouse)', url: '' },
