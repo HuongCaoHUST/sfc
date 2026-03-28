@@ -22,12 +22,17 @@ services:
       - sender
     volumes:
       - ./yolo11n.onnx:/app/yolo11n.onnx 
+    environment:
+      - GST_DEBUG=4
+      - GST_DEBUG_DUMP_DOT_DIR=/tmp/gst
     command: >
+      sh -c "
       gst-launch-1.0
       udpsrc port=5000 buffer-size=2097152 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
       rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
-      yolodetection model-path="/app/yolo11n.onnx" dest-host="ai-dashboard" dest-port=5002 ! 
+      yolodetection model-path="/app/yolo11n.onnx" conf-threshold=0.5 dest-host="ai-dashboard" dest-port=5002 ! 
       fakesink sync=false
+      "
     networks:
       - video_net
 
@@ -45,7 +50,8 @@ services:
     build: .
     container_name: ai_surveillance_dashboard
     ports:
-      - "3000:80"
+      - "3000:3000"
+      - "5002:5002/udp"
     environment:
       - NODE_ENV=production
     networks:

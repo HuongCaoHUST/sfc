@@ -3,45 +3,266 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
-import { Shield, Settings } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { Shield, Settings, WifiOff } from 'lucide-react';
 
 const CAMERAS = [
-  { id: 'cam1', name: 'WEBCAM', url: 'http://127.0.0.1:8889/cam1' },
+  { id: 'cam1', name: 'WEBCAM AI', url: 'http://127.0.0.1:8889/cam1' },
   { id: 'cam2', name: 'Bãi đỗ xe (Parking Lot)', url: '' },
   { id: 'cam3', name: 'Hành lang tầng 1 (Hallway L1)', url: '' },
   { id: 'cam4', name: 'Kho hàng (Warehouse)', url: '' },
 ];
 
+// Định nghĩa kiểu dữ liệu chính xác theo JSON bạn cung cấp
+interface AIInference {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+  class: string;
+  class_id: number;
+  detection_id: string;
+}
+
+interface AIResponse {
+  predictions: AIInference[];
+}
+
+// Cấu hình WebSocket tới Container AI
+const AI_CONTAINER_WS_URL = `ws://${window.location.host}`;
+// ==========================================
+// COMPONENT: Xử lý WebRTC & AI Bounding Box
+// ==========================================
+const WebRTCCamera = ({ streamUrl }: { streamUrl: string }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<boolean>(false);
+  const [predictions, setPredictions] = useState<AIInference[]>([]);
+
+  // 1. Kết nối WebRTC (Video Stream) - Chạy hoàn toàn độc lập
+  useEffect(() => {
+    if (!streamUrl) return;
+
+    let isMounted = true;
+    const peerConnection = new RTCPeerConnection({ iceServers: [] });
+
+    peerConnection.ontrack = (event) => {
+      console.log("🎥 Đã nhận track video!");
+      if (videoRef.current) {
+        videoRef.current.srcObject = event.streams[0];
+      }
+    };
+
+    peerConnection.addTransceiver('video', { direction: 'recvonly' });
+
+    const connectWHEP = async () => {
+      try {
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        await new Promise(resolve => setTimeout(resolve, 500)); // Đợi ICE
+
+        const response = await fetch(`${streamUrl}/whep`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: peerConnection.localDescription?.sdp
+        });
+
+        if (!response.ok) throw new Error('WHEP Failed');
+
+        const answerSdp = await response.text();
+        await peerConnection.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+        
+        if (isMounted) setStreamError(null);
+      } catch (err: any) {
+        if (isMounted) setStreamError("LỖI KẾT NỐI CAMERA");
+      }
+    };
+
+    connectWHEP();
+
+    return () => {
+      isMounted = false;
+      peerConnection.close();
+      if (videoRef.current) videoRef.current.srcObject = null;
+    };
+  }, [streamUrl]);
+
+  // 2. Kết nối WebSocket (AI Data)
+  useEffect(() => {
+    const connectWS = () => {
+      const ws = new WebSocket(AI_CONTAINER_WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('✅ AI Connected');
+        setAiError(false);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data: AIResponse = JSON.parse(event.data);
+          console.log("📦 RAW JSON TỪ AI:", data);
+          if (data && data.predictions) {
+            setPredictions(data.predictions);
+          }
+        } catch (e) {
+          // Bỏ qua lỗi parse nếu có frame bị hỏng
+        }
+      };
+
+      ws.onerror = () => {
+        setAiError(true);
+        setPredictions([]); // Xóa box cũ nếu lỗi
+      };
+      
+      ws.onclose = () => {
+        setAiError(true);
+        setPredictions([]); // Xóa box cũ nếu đứt kết nối
+        setTimeout(connectWS, 2000); // Thử lại sau 2s
+      };
+    };
+
+    connectWS();
+
+    return () => {
+      wsRef.current?.close();
+    };
+  }, []);
+
+  // 3. Vẽ Bounding Box
+  useEffect(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!canvas || !video) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const drawBoxes = () => {
+      // 1. Cập nhật kích thước vật lý của canvas bằng với kích thước hiển thị của thẻ video
+      canvas.width = video.clientWidth;
+      canvas.height = video.clientHeight;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (aiError || predictions.length === 0 || !video.videoWidth) return;
+
+      // 2. Tính toán tỷ lệ khung hình
+      const videoRatio = video.videoWidth / video.videoHeight; // Tỷ lệ video gốc (VD: 640/480 = 1.333)
+      const canvasRatio = canvas.width / canvas.height;        // Tỷ lệ vùng chứa trên web
+
+      let drawWidth, drawHeight; // Kích thước thực tế của vùng có hình ảnh trên màn hình
+      let offsetX = 0;           // Khoảng cách viền đen thừa bên trái/phải
+      let offsetY = 0;           // Khoảng cách viền đen thừa bên trên/dưới
+
+      // 3. Tìm vùng hiển thị thực tế dựa theo CSS "object-contain"
+      if (videoRatio > canvasRatio) {
+        // Video "dẹp" hơn vùng chứa -> Bị kịch chiều ngang, dư viền đen trên/dưới
+        drawWidth = canvas.width;
+        drawHeight = canvas.width / videoRatio;
+        offsetY = (canvas.height - drawHeight) / 2;
+      } else {
+        // Video "vuông" hơn vùng chứa -> Bị kịch chiều dọc, dư viền đen trái/phải
+        drawHeight = canvas.height;
+        drawWidth = canvas.height * videoRatio;
+        offsetX = (canvas.width - drawWidth) / 2;
+      }
+
+      // 4. Tính toán tỷ lệ scale dựa trên vùng hiển thị thực tế
+      const scaleX = drawWidth / video.videoWidth;
+      const scaleY = drawHeight / video.videoHeight;
+
+      predictions.forEach(box => {
+        // 5. Tính tọa độ cuối cùng: Phải cộng thêm Offset (viền đen) vào
+        const scaledX = (box.x * scaleX) + offsetX;
+        const scaledY = (box.y * scaleY) + offsetY;
+        const scaledW = box.width * scaleX;
+        const scaledH = box.height * scaleY;
+
+        const color = box.class_id === 1 ? '#00ff00' : '#ff3333';
+
+        // Vẽ khung
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color + '22';
+        ctx.beginPath();
+        ctx.rect(scaledX, scaledY, scaledW, scaledH);
+        ctx.stroke();
+        ctx.fill();
+
+        // Vẽ nhãn
+        ctx.fillStyle = color;
+        ctx.font = 'bold 11px monospace';
+        const confPercent = (box.confidence * 100).toFixed(0);
+        const labelText = `${box.class} ${confPercent}%`;
+        const textWidth = ctx.measureText(labelText).width;
+
+        ctx.fillRect(scaledX, scaledY - 18, textWidth + 8, 18);
+        ctx.fillStyle = '#000000';
+        ctx.fillText(labelText, scaledX + 4, scaledY - 5);
+      });
+    };
+
+    let animationFrameId: number;
+    const render = () => {
+      drawBoxes();
+      animationFrameId = requestAnimationFrame(render);
+    };
+    render();
+
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [predictions, aiError]);
+
+  // Nếu bản thân Camera (MediaMTX) chết, hiện lỗi to ở giữa
+  if (streamError) {
+    return (
+      <div className="w-full h-full bg-black flex items-center justify-center">
+        <span className="text-red-500 text-xs font-mono animate-pulse">{streamError}</span>
+      </div>
+    );
+  }
+
+  // Render Video bình thường
+  return (
+    <>
+      <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-contain bg-black z-0" />
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10" />
+      
+      {/* Cảnh báo AI Offline thu nhỏ ở góc trên bên phải */}
+      {aiError && (
+        <div className="absolute top-3 right-3 flex items-center gap-1.5 text-orange-400 bg-black/80 px-2.5 py-1 rounded border border-orange-500/30 z-20 shadow-lg pointer-events-none">
+          <WifiOff className="w-3.5 h-3.5 animate-pulse" />
+          <span className="text-[10px] font-mono font-bold">AI OFFLINE</span>
+        </div>
+      )}
+    </>
+  );
+};
+
+// ==========================================
+// COMPONENT CHÍNH: App (Giữ nguyên)
+// ==========================================
 export default function App() {
   const [maximizedCam, setMaximizedCam] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
   const handleMaximize = (camId: string) => {
-    if (maximizedCam === camId) {
-      setMaximizedCam(null);
-    } else {
-      setMaximizedCam(camId);
-    }
+    if (maximizedCam === camId) setMaximizedCam(null);
+    else setMaximizedCam(camId);
   };
 
   return (
     <div className="min-h-screen bg-[#050505] text-white font-sans flex items-center justify-center p-0 md:p-4">
-      {/* 
-          DASHBOARD SHELL 
-          - Trên desktop: Cố định tỷ lệ 16:9, tối đa 1920px.
-          - Trên mobile: Tự do theo chiều dọc.
-      */}
       <div className="w-full max-w-[1920px] h-screen md:h-auto md:aspect-video bg-[#0a0a0a] flex flex-col shadow-2xl shadow-black/50 border-0 md:border md:border-[#222] md:rounded-2xl overflow-hidden">
-        
-        {/* Header - Chiếm chiều cao cố định */}
         <header className="h-16 md:h-20 flex items-center justify-between bg-[#111] px-4 md:px-6 border-b border-[#222] shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-orange-500/10 rounded-lg hidden sm:block">
@@ -51,13 +272,9 @@ export default function App() {
               <h1 className="text-sm md:text-xl font-bold tracking-tight">AI SURVEILLANCE CORE</h1>
             </div>
           </div>
-
-          <div className="flex items-center gap-4 md:gap-8">
-            <Settings className="w-5 h-5 text-gray-600 cursor-pointer hover:text-white transition-colors" />
-          </div>
+          <Settings className="w-5 h-5 text-gray-600 cursor-pointer hover:text-white transition-colors" />
         </header>
 
-        {/* Camera Grid - Tự động lấp đầy không gian còn lại */}
         <main className={`flex-1 grid gap-px md:gap-1 bg-[#1a1a1a] overflow-y-auto md:overflow-hidden ${maximizedCam ? 'grid-cols-1 grid-rows-1' : 'grid-cols-1 md:grid-cols-2 md:grid-rows-2'}`}>
           {CAMERAS.map((cam) => (
             <div 
@@ -65,7 +282,6 @@ export default function App() {
               className={`relative group bg-black flex flex-col min-h-[250px] md:min-h-0 ${maximizedCam && maximizedCam !== cam.id ? 'hidden' : ''}`}
               onDoubleClick={() => handleMaximize(cam.id)}
             >
-              {/* Camera Info Overlay */}
               <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/90 to-transparent z-20 flex justify-between items-center pointer-events-none">
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse" />
@@ -75,15 +291,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Video & Canvas Layer */}
               <div className="relative flex-1 flex items-center justify-center overflow-hidden">
                 {cam.url ? (
-                  <iframe
-                    src={cam.url}
-                    className="w-full h-full border-0"
-                    allow="autoplay; encrypted-media; picture-in-picture"
-                    allowFullScreen
-                  ></iframe>
+                  <WebRTCCamera streamUrl={cam.url} />
                 ) : (
                   <div className="w-full h-full bg-black flex items-center justify-center">
                     <span className="text-gray-500 text-xs font-mono">NO SIGNAL</span>
@@ -91,31 +301,24 @@ export default function App() {
                 )}
               </div>
 
-              {/* Bottom Bar */}
-              <div className="absolute bottom-0 left-0 right-0 p-2 flex justify-between items-center bg-gradient-to-t from-black/60 to-transparent pointer-events-none">
-                <div className="text-[9px] font-mono text-white/50">
-                  {currentTime.toLocaleTimeString()}
-                </div>
+              <div className="absolute bottom-0 left-0 right-0 p-2 flex justify-between items-center bg-gradient-to-t from-black/60 to-transparent z-20 pointer-events-none">
+                <div className="text-[9px] font-mono text-white/50">{currentTime.toLocaleTimeString()}</div>
                 <div className="flex gap-2">
-                  <div className="px-1.5 py-0.5 bg-black/50 rounded text-[8px] font-mono text-blue-400 border border-blue-400/30">
-                    WebRTC
-                  </div>
+                  <div className="px-1.5 py-0.5 bg-black/50 rounded text-[8px] font-mono text-green-400 border border-green-400/30">AI Active</div>
+                  <div className="px-1.5 py-0.5 bg-black/50 rounded text-[8px] font-mono text-blue-400 border border-blue-400/30">WebRTC WHEP</div>
                 </div>
               </div>
             </div>
           ))}
         </main>
 
-        {/* Footer - Thanh trạng thái nhỏ */}
         <footer className="h-8 bg-[#0a0a0a] border-t border-[#222] flex items-center justify-between px-4 shrink-0 hidden md:flex">
           <div className="flex gap-4">
             <span className="text-[9px] text-gray-600 font-mono">CPU: 12%</span>
             <span className="text-[9px] text-gray-600 font-mono">MEM: 1.2GB</span>
-            <span className="text-[9px] text-gray-600 font-mono">NET: 4.5MB/s</span>
+            <span className="text-[9px] text-gray-600 font-mono">NET: Real-time</span>
           </div>
-          <div className="text-[9px] text-gray-600 font-mono uppercase tracking-widest">
-            Secure AI Node v2.4.0-Stable
-          </div>
+          <div className="text-[9px] text-gray-600 font-mono uppercase tracking-widest">Secure AI Node v2.4.0-Stable</div>
         </footer>
       </div>
     </div>
