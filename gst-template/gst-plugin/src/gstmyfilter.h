@@ -32,13 +32,13 @@
 #include <vector>
 #include <string>
 
+#include "yolo_engine.h"
+
 G_BEGIN_DECLS
 
 #define GST_TYPE_MYFILTER (gst_myfilter_get_type())
 G_DECLARE_FINAL_TYPE (Gstmyfilter, gst_myfilter,
     GST, MYFILTER, GstBaseTransform)
-
-class YoloDetector;
 
 struct _Gstmyfilter {
   GstBaseTransform element;
@@ -46,7 +46,7 @@ struct _Gstmyfilter {
   gchar *model_path;      /* Model path */
   gfloat conf_threshold;  /* Confidence threshold */
   
-  YoloDetector *detector;
+  YoloEngine *yolo_engine;
   GstVideoInfo *video_info;
 
   GstClockTime last_time;

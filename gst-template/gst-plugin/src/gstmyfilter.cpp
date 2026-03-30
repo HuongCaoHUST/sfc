@@ -3,9 +3,10 @@
 #endif
 
 #include "gstmyfilter.h"
-#include "yolo_engine.h"
+// yolo_engine.h is now included via gstmyfilter.h
 #include <sstream>
 #include <iomanip>
+#include <stdexcept>
 
 GST_DEBUG_CATEGORY_STATIC (gst_myfilter_debug);
 #define GST_CAT_DEFAULT gst_myfilter_debug
@@ -88,7 +89,7 @@ gst_myfilter_init (Gstmyfilter * filter)
 {
   filter->model_path = NULL;
   filter->conf_threshold = 0.5f;
-  filter->detector = NULL;
+  filter->yolo_engine = nullptr;
   filter->video_info = gst_video_info_new ();
 
   filter->last_time = GST_CLOCK_TIME_NONE;
@@ -100,9 +101,9 @@ static void gst_myfilter_finalize (GObject * object)
 {
     Gstmyfilter *filter = GST_MYFILTER (object);
     g_free (filter->model_path);
-    if(filter->detector) {
-        delete filter->detector;
-        filter->detector = NULL;
+    if(filter->yolo_engine) {
+        delete filter->yolo_engine;
+        filter->yolo_engine = nullptr;
     }
     gst_video_info_free(filter->video_info);
 
@@ -120,14 +121,15 @@ gst_myfilter_set_property (GObject * object, guint prop_id,
       g_free(filter->model_path);
       filter->model_path = g_value_dup_string(value);
       GST_INFO_OBJECT(filter, "Model path set to: %s", filter->model_path);
-      if (filter->detector) {
-          delete filter->detector;
+      if (filter->yolo_engine) {
+          delete filter->yolo_engine;
+          filter->yolo_engine = nullptr;
       }
-      filter->detector = new YoloDetector();
-      if (!filter->detector->load_model(filter->model_path)) {
-          GST_ERROR_OBJECT(filter, "Failed to load ONNX model from %s", filter->model_path);
-      } else {
-          GST_INFO_OBJECT(filter, "Successfully loaded ONNX model.");
+      try {
+        filter->yolo_engine = new YoloEngine(filter->model_path);
+        GST_INFO_OBJECT(filter, "Successfully loaded ONNX model.");
+      } catch (const std::exception& e) {
+        GST_ERROR_OBJECT(filter, "Failed to load ONNX model: %s", e.what());
       }
       break;
     case PROP_CONF_THRESHOLD:
@@ -175,8 +177,8 @@ gst_myfilter_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
   Gstmyfilter *filter = GST_MYFILTER (base);
   GstMapInfo map;
 
-  if (!filter->detector) {
-    GST_WARNING_OBJECT(filter, "Detector not initialized, passing buffer through.");
+  if (!filter->yolo_engine) {
+    GST_WARNING_OBJECT(filter, "Yolo engine not initialized, passing buffer through.");
     return GST_FLOW_OK;
   }
   
@@ -188,7 +190,7 @@ gst_myfilter_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
     cv::Mat frame(height, width, CV_8UC3, map.data);
 
     // Perform detection
-    auto detections = filter->detector->detect(frame, filter->conf_threshold);
+    auto detections = filter->yolo_engine->detect(frame, filter->conf_threshold);
 
     // Draw detections on the frame
     for(const auto& d : detections) {

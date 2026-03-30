@@ -12,24 +12,26 @@ struct Detection {
     int class_id;
 };
 
-class YoloDetector {
+class YoloEngine {
 public:
-    YoloDetector();
-    ~YoloDetector();
+    YoloEngine(const std::string& model_path, bool use_gpu = false);
+    ~YoloEngine();
 
-    bool load_model(const std::string& model_path, bool use_gpu = false);
-    std::vector<Detection> detect(cv::Mat& frame, float conf_threshold = 0.5f);
+    // For 2-part models
+    std::vector<float> run_part1(cv::Mat& frame);
+    std::vector<Detection> run_part2_and_postprocess(const float* tensor_data, size_t tensor_size,
+        int frame_width, int frame_height, float conf_threshold = 0.5f, float nms_threshold = 0.45f);
+
+    // For single-shot models (legacy plugins)
+    std::vector<Detection> detect(cv::Mat& frame, float conf_threshold = 0.5f, float nms_threshold = 0.45f);
 
 private:
     Ort::Env env;
     Ort::Session* session = nullptr;
-    Ort::RunOptions run_options;
     
+    std::vector<const char*> input_names_char;
+    std::vector<const char*> output_names_char;
     std::vector<int64_t> input_shape;
-    std::vector<std::string> input_names;
-    std::vector<std::string> output_names;
-
-    void preprocess(cv::Mat& frame, float* blob);
 };
 
 #endif

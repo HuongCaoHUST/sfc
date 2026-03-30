@@ -31,13 +31,13 @@
 #include <string>
 #include <netinet/in.h>
 
+#include "yolo_engine.h"
+
 G_BEGIN_DECLS
 
 #define GST_TYPE_YOLODETECTION (gst_yolodetection_get_type())
 G_DECLARE_FINAL_TYPE (Gstyolodetection, gst_yolodetection,
     GST, YOLODETECTION, GstBaseTransform)
-
-class YoloDetector;
 
 struct _Gstyolodetection {
   GstBaseTransform element;
@@ -48,7 +48,7 @@ struct _Gstyolodetection {
   gchar *dest_host;       /* UDP Destination Host/IP */
   gint dest_port;         /* UDP Destination Port */
 
-  YoloDetector *detector;
+  YoloEngine *yolo_engine;
   GstVideoInfo *video_info;
 
   GstClockTime last_time;

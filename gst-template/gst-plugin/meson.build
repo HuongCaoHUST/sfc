@@ -58,3 +58,37 @@ gstyolojsonoverlay_plugin = library('gstyolojsonoverlay',
   install : true,
   install_dir : plugins_install_dir,
 )
+
+# Added by Gemini:
+# Dependency for UDP communication in yolobackend
+gio_dep = dependency('gio-2.0', required: true)
+
+# Plugin yoloforward
+gstyoloforward_sources = [
+  'src/gstyoloforward.cpp',
+  'src/yolo_engine.cpp'
+  ]
+
+gstyoloforward_plugin = library('gstyoloforward',
+  gstyoloforward_sources,
+  cpp_args: plugin_c_args,
+  dependencies : [gst_dep, gstbase_dep, gstvideo_dep, opencv_dep, onnx_lib],
+  include_directories: [onnx_inc],
+  install : true,
+  install_dir : plugins_install_dir,
+)
+
+# Plugin yolobackend
+gstyolobackend_sources = [
+  'src/gstyolobackend.cpp',
+  'src/yolo_engine.cpp'
+  ]
+
+gstyolobackend_plugin = library('gstyolobackend',
+  gstyolobackend_sources,
+  cpp_args: plugin_c_args,
+  dependencies : [gst_dep, gstbase_dep, gstvideo_dep, opencv_dep, onnx_lib, gio_dep],
+  include_directories: [onnx_inc],
+  install : true,
+  install_dir : plugins_install_dir,
+)
