@@ -1,0 +1,7 @@
+*.mp4
+*.avi
+*.mkv
+*.onnx
+*.pt
+*.weights
+node_modules/

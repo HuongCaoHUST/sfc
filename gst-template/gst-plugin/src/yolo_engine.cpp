@@ -62,7 +62,7 @@ std::vector<Detection> YoloDetector::detect(cv::Mat& frame, float conf_threshold
 
     // Convert image to blob
     cv::Mat blob;
-    cv::dnn::blobFromImage(frame, blob, 1.0 / 255.0, cv::Size(net_w, net_h), cv::Scalar(), true, false);
+    cv::dnn::blobFromImage(frame, blob, 1.0 / 255.0, cv::Size(), cv::Scalar(), true, false);
 
     // Create input tensor
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);

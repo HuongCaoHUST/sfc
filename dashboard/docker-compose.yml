@@ -116,7 +116,9 @@ services:
       sh -c "
       gst-launch-1.0
       udpsrc port=5000 buffer-size=2097152 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
-      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=10/1 ! queue max-size-buffers=1 leaky=downstream !
+      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=6/1 !
+      videoscale ! video/x-raw,width=640,height=640 !
+      queue max-size-buffers=1 leaky=downstream !
       yolodetection model-path="/app/yolo11n.onnx" conf-threshold=0.2 dest-host="ai-dashboard" dest-port=5103 ! 
       fakesink sync=false
       "
@@ -137,7 +139,9 @@ services:
       sh -c "
       gst-launch-1.0
       udpsrc port=5000 buffer-size=2097152 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
-      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=10/1 ! queue max-size-buffers=1 leaky=downstream !
+      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=6/1 !
+      videoscale ! video/x-raw,width=640,height=640 !
+      queue max-size-buffers=1 leaky=downstream !
       yolodetection model-path="/app/yolo11n.onnx" conf-threshold=0.4 dest-host="ai-dashboard" dest-port=5104 ! 
       fakesink sync=false
       "

@@ -68,8 +68,8 @@ enum
 
 #define SUPPORTED_CAPS "video/x-raw, " \
     "format = (string) { BGR }, " \
-    "width = (int) [ 1, 2147483647 ], " \
-    "height = (int) [ 1, 2147483647 ], " \
+    "width = (int) 640, " \
+    "height = (int) 640, " \
     "framerate = (fraction) [ 0/1, 2147483647/1 ]"
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",

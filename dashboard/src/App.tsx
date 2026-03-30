@@ -172,9 +172,13 @@ const WebRTCCamera = ({ streamUrl, camId }: { streamUrl: string; camId: string }
         offsetX = (canvas.width - drawWidth) / 2;
       }
 
-      // 4. Tính toán tỷ lệ scale dựa trên vùng hiển thị thực tế
-      const scaleX = drawWidth / video.videoWidth;
-      const scaleY = drawHeight / video.videoHeight;
+      // 4. Tính toán tỷ lệ scale.
+      // Tọa độ box (box.x, box.y) được GStreamer tính trên một khung hình 640x640 cố định.
+      // Vì vậy, chúng ta phải chia cho 640 để có được tỷ lệ scale chính xác.
+      const inferenceWidth = 640;
+      const inferenceHeight = 640;
+      const scaleX = drawWidth / inferenceWidth;
+      const scaleY = drawHeight / inferenceHeight;
 
       predictions.forEach(box => {
         // 5. Tính tọa độ cuối cùng: Phải cộng thêm Offset (viền đen) vào
