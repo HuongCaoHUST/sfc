@@ -269,6 +269,16 @@ gst_yolo_backend_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
         return GST_FLOW_ERROR;
     }
 
+    const size_t EXPECTED_BYTES = 1024000 * sizeof(float);
+
+    if (map.size != EXPECTED_BYTES) {
+        GST_WARNING_OBJECT(self, "Dữ liệu không đủ! Nhận được %zu bytes, cần %zu bytes. Bỏ qua frame này.", 
+                           map.size, EXPECTED_BYTES);
+        gst_buffer_unmap(buf, &map);
+        // Trả về GST_FLOW_OK thay vì ERROR để pipeline tiếp tục chạy frame sau
+        return GST_FLOW_OK; 
+    }
+
     // This buffer comes from yoloforward, containing the raw float tensor
     float* tensor_data = (float*)map.data;
     size_t tensor_size = map.size / sizeof(float);
@@ -308,6 +318,7 @@ gst_yolo_backend_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
 
     // Send over UDP
     std::string json_str = result_json.dump();
+    g_print("DEBUG: Sending JSON: %s\n", json_str.c_str());
     g_socket_send_to(self->udp_socket, (GSocketAddress*)self->socket_address, json_str.c_str(), json_str.length(), NULL, &error);
     
     if (error) {

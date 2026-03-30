@@ -240,25 +240,21 @@ static GstFlowReturn
 gst_yolo_forward_transform (GstBaseTransform * trans, GstBuffer * inbuf, GstBuffer * outbuf)
 {
   GstYoloForward *self = GST_YOLO_FORWARD (trans);
-  GstMapInfo in_map;
+  GstMapInfo in_map, out_map;
 
-  if (gst_buffer_map (inbuf, &in_map, GST_MAP_READ) == FALSE) {
+  // 1. Map đầu vào để lấy ảnh BGR
+  if (!gst_buffer_map (inbuf, &in_map, GST_MAP_READ)) {
     GST_ERROR_OBJECT(self, "Failed to map input buffer");
     return GST_FLOW_ERROR;
   }
 
-  // Map GstBuffer to cv::Mat without copying
   cv::Mat frame(self->video_info->height, self->video_info->width, CV_8UC3, in_map.data);
-  
   if (frame.empty()) {
       gst_buffer_unmap(inbuf, &in_map);
-      GST_ERROR_OBJECT(self, "Input frame is empty");
       return GST_FLOW_ERROR;
   }
 
-  // Pre-process and run inference
-  // NOTE: This assumes YoloEngine has a method that returns the raw tensor output.
-  // You might need to adapt YoloEngine.
+  // 2. Chạy Inference Part 1
   std::vector<float> output_tensor_data;
   try {
     output_tensor_data = self->yolo_engine->run_part1(frame);
@@ -267,40 +263,37 @@ gst_yolo_forward_transform (GstBaseTransform * trans, GstBuffer * inbuf, GstBuff
     gst_buffer_unmap(inbuf, &in_map);
     return GST_FLOW_ERROR;
   }
-
   gst_buffer_unmap (inbuf, &in_map);
 
-  if (output_tensor_data.empty()) {
-      GST_WARNING_OBJECT(self, "Inference produced no output");
-      // Return an empty buffer to keep the pipeline flowing
-      gst_buffer_resize(outbuf, 0, 0);
-      return GST_FLOW_OK;
-  }
-  
-  // Allocate new buffer for the output tensor
+  // 3. XỬ LÝ ĐẦU RA (Quan trọng nhất)
   gsize output_size = output_tensor_data.size() * sizeof(float);
-  GstBuffer *tensor_buf = gst_buffer_new_allocate(NULL, output_size, NULL);
 
-  if (!tensor_buf) {
-      GST_ERROR_OBJECT(self, "Failed to allocate output tensor buffer");
-      return GST_FLOW_ERROR;
-  }
-
-  // Copy tensor data to the new buffer
-  GstMapInfo out_map;
-  if (gst_buffer_map(tensor_buf, &out_map, GST_MAP_WRITE)) {
-      memcpy(out_map.data, output_tensor_data.data(), output_size);
-      gst_buffer_unmap(tensor_buf, &out_map);
-  } else {
-      GST_ERROR_OBJECT(self, "Failed to map output tensor buffer");
-      gst_buffer_unref(tensor_buf);
-      return GST_FLOW_ERROR;
-  }
-
-  // Copy timestamp and other metadata
-  gst_buffer_copy_into(outbuf, tensor_buf, (GstBufferCopyFlags)(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS), 0, -1);
-  gst_buffer_unref(tensor_buf);
+  /* * Giải thích: outbuf truyền vào hàm này đã được GStreamer cấp phát với size của IN_CAPS (BGR).
+   * Chúng ta KHÔNG THỂ memcpy 4MB vào buffer 1.2MB.
+   * Ta sẽ thay thế vùng nhớ (Memory Block) của outbuf bằng vùng nhớ mới đúng size.
+   */
   
+  // Tạo memory block mới đúng kích thước 4MB
+  GstMemory *new_mem = gst_allocator_alloc (NULL, output_size, NULL);
+  if (!new_mem) {
+      GST_ERROR_OBJECT(self, "Failed to allocate memory for tensor");
+      return GST_FLOW_ERROR;
+  }
+
+  // Map memory mới để ghi dữ liệu Tensor vào
+  if (gst_memory_map (new_mem, &out_map, GST_MAP_WRITE)) {
+      memcpy (out_map.data, output_tensor_data.data(), output_size);
+      gst_memory_unmap (new_mem, &out_map);
+  }
+
+  // Xóa vùng nhớ cũ của outbuf và thay bằng vùng nhớ mới
+  gst_buffer_remove_all_memory (outbuf);
+  gst_buffer_append_memory (outbuf, new_mem);
+
+  // Copy timestamps từ inbuf sang outbuf để giữ đồng bộ
+  gst_buffer_copy_into (outbuf, inbuf, 
+      (GstBufferCopyFlags)(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS), 0, -1);
+
   return GST_FLOW_OK;
 }
 
