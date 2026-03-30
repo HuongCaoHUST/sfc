@@ -2,6 +2,8 @@
 #include <numeric>
 #include <algorithm>
 #include <stdexcept>
+#include <cstring>
+#include <cstdlib>
 
 // Constructor: Loads the model and initializes the session.
 YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu) : env(ORT_LOGGING_LEVEL_WARNING, "YOLO_Engine") {
@@ -18,9 +20,9 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu) : env(ORT_LO
     // Get input and output names
     // Note: This assumes single input/output models.
     auto input_name = session->GetInputNameAllocated(0, allocator);
-    input_names_char.push_back(input_name.get());
+    input_names_char.push_back(strdup(input_name.get()));
     auto output_name = session->GetOutputNameAllocated(0, allocator);
-    output_names_char.push_back(output_name.get());
+    output_names_char.push_back(strdup(output_name.get()));
     
     // Get input shape
     Ort::TypeInfo input_type_info = session->GetInputTypeInfo(0);
@@ -35,6 +37,15 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu) : env(ORT_LO
 
 // Destructor
 YoloEngine::~YoloEngine() {
+    for (auto p : input_names_char) {
+        free((void*)p);
+    }
+    input_names_char.clear();
+    for (auto p : output_names_char) {
+        free((void*)p);
+    }
+    output_names_char.clear();
+
     if (session) {
         delete session;
         session = nullptr;
