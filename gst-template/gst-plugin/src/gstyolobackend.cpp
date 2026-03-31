@@ -29,6 +29,18 @@
 #include "gstyolobackend.h"
 #include <nlohmann/json.hpp>
 
+#include <sstream>
+#include <iomanip>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <cstring>
+#include <stdexcept>
+#include <cmath> 
+
 GST_DEBUG_CATEGORY_STATIC (gst_yolo_backend_debug);
 #define GST_CAT_DEFAULT gst_yolo_backend_debug
 
@@ -118,9 +130,14 @@ gst_yolo_backend_init (GstYoloBackend * self)
   self->dest_host = g_strdup("127.0.0.1");
   self->dest_port = 5005;
   self->yolo_engine = nullptr;
-  self->udp_socket = nullptr;
-  self->dest_address = nullptr;
-  self->socket_address = nullptr;
+
+  // Khởi tạo POSIX socket và các biến đếm
+  self->frame_count = 0;
+  self->last_time = GST_CLOCK_TIME_NONE;
+  self->current_fps = 0.0;
+  self->udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+  self->addr_resolved = FALSE;
+  memset(&self->dest_addr, 0, sizeof(self->dest_addr));
 
   // Set transform to be in-place
   gst_base_transform_set_in_place(GST_BASE_TRANSFORM(self), TRUE);
@@ -139,14 +156,11 @@ gst_yolo_backend_finalize (GObject * object)
   if (self->yolo_engine) {
     delete self->yolo_engine;
   }
-  if (self->socket_address) {
-      g_object_unref(self->socket_address);
-  }
-  if (self->dest_address) {
-      g_object_unref(self->dest_address);
-  }
-  if (self->udp_socket) {
-      g_object_unref(self->udp_socket);
+
+  // Đóng POSIX socket
+  if (self->udp_sock >= 0) {
+      close(self->udp_sock);
+      self->udp_sock = -1;
   }
   
   G_OBJECT_CLASS (gst_yolo_backend_parent_class)->finalize (object);
@@ -166,9 +180,11 @@ gst_yolo_backend_set_property (GObject * object, guint prop_id,
     case PROP_DEST_HOST:
       g_free(self->dest_host);
       self->dest_host = g_value_dup_string(value);
+      self->addr_resolved = FALSE;
       break;
     case PROP_DEST_PORT:
       self->dest_port = g_value_get_int(value);
+      self->addr_resolved = FALSE;
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -202,10 +218,14 @@ static gboolean
 gst_yolo_backend_start (GstBaseTransform * trans)
 {
   GstYoloBackend *self = GST_YOLO_BACKEND (trans);
-  GError *error = NULL;
   GST_INFO_OBJECT (self, "Starting...");
 
   // Init Yolo Engine
+  if (self->yolo_engine) {
+      delete self->yolo_engine;
+      self->yolo_engine = nullptr;
+  }
+
   try {
     self->yolo_engine = new YoloEngine(self->model_path);
     GST_INFO_OBJECT(self, "ONNX Runtime session created for %s", self->model_path);
@@ -213,19 +233,6 @@ gst_yolo_backend_start (GstBaseTransform * trans)
     GST_ERROR_OBJECT(self, "Failed to create YoloEngine: %s", e.what());
     return FALSE;
   }
-
-  // Init UDP Socket
-  self->udp_socket = g_socket_new(G_SOCKET_FAMILY_IPV4, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, &error);
-  if (error) {
-      GST_ERROR_OBJECT(self, "Failed to create UDP socket: %s", error->message);
-      g_error_free(error);
-      return FALSE;
-  }
-
-  self->dest_address = g_inet_address_new_from_string(self->dest_host);
-  self->socket_address = (GInetSocketAddress*)g_inet_socket_address_new(self->dest_address, self->dest_port);
-
-  GST_INFO_OBJECT(self, "UDP socket configured to send to %s:%d", self->dest_host, self->dest_port);
 
   return TRUE;
 }
@@ -242,18 +249,6 @@ gst_yolo_backend_stop (GstBaseTransform * trans)
     GST_INFO_OBJECT(self, "YoloEngine destroyed.");
   }
 
-  if (self->udp_socket) {
-      g_socket_close(self->udp_socket, NULL);
-      g_object_unref(self->udp_socket);
-      self->udp_socket = nullptr;
-      g_object_unref(self->socket_address);
-      self->socket_address = nullptr;
-      g_object_unref(self->dest_address);
-      self->dest_address = nullptr;
-      GST_INFO_OBJECT(self, "UDP socket closed.");
-  }
-
-
   return TRUE;
 }
 
@@ -262,7 +257,6 @@ gst_yolo_backend_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
 {
     GstYoloBackend *self = GST_YOLO_BACKEND (trans);
     GstMapInfo map;
-    GError *error = NULL;
 
     if (gst_buffer_map (buf, &map, GST_MAP_READ) == FALSE) {
         GST_ERROR_OBJECT(self, "Failed to map input buffer");
@@ -299,33 +293,83 @@ gst_yolo_backend_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     
     gst_buffer_unmap (buf, &map);
 
-    // Create JSON
-    json result_json;
-    result_json["pts"] = GST_BUFFER_PTS(buf);
-    json predictions = json::array();
-    
-    for(const auto& d : detections) {
-        json det;
-        det["x"] = d.box.x;
-        det["y"] = d.box.y;
-        det["w"] = d.box.width;
-        det["h"] = d.box.height;
-        det["confidence"] = d.confidence;
-        det["class_id"] = d.class_id;
-        predictions.push_back(det);
-    }
-    result_json["predictions"] = predictions;
+    GstClockTime current_pts = GST_BUFFER_PTS(buf);
+    guint64 pts_val = (current_pts == GST_CLOCK_TIME_NONE) ? 0 : (guint64)current_pts;
 
-    // Send over UDP
-    std::string json_str = result_json.dump();
-    g_print("DEBUG: Sending JSON: %s\n", json_str.c_str());
-    g_socket_send_to(self->udp_socket, (GSocketAddress*)self->socket_address, json_str.c_str(), json_str.length(), NULL, &error);
+    std::stringstream json_ss;
+    json_ss << "{\n";
+    json_ss << "  \"pts\": " << pts_val << ",\n";
+    json_ss << "  \"predictions\": [\n";
+    for(size_t i = 0; i < detections.size(); ++i) {
+        const auto& d = detections[i];
+        std::string class_name = "Class_" + std::to_string(d.class_id); 
+        
+        std::string detection_id = "uuid-" + std::to_string(self->frame_count) + "-" + std::to_string(i);
+
+        json_ss << "    {\n"
+                << "      \"x\": " << d.box.x << ",\n"
+                << "      \"y\": " << d.box.y << ",\n"
+                << "      \"width\": " << d.box.width << ",\n"
+                << "      \"height\": " << d.box.height << ",\n"
+                << "      \"confidence\": " << std::fixed << std::setprecision(3) << d.confidence << ",\n"
+                << "      \"class\": \"" << class_name << "\",\n"
+                << "      \"class_id\": " << d.class_id << ",\n"
+                << "      \"detection_id\": \"" << detection_id << "\"\n"
+                << "    }";
+
+        if (i < detections.size() - 1) {
+            json_ss << ",";
+        }
+        json_ss << "\n";
+    }
+    json_ss << "  ]\n}";
+    std::string final_json_string = json_ss.str();
+
+    // =========================================================
+    // PHẦN GỬI UDP (POSIX SOCKET) VÀ TÍNH FPS
+    // =========================================================
+    if (self->udp_sock >= 0) {
+        if (!self->addr_resolved) {
+            struct addrinfo hints, *res;
+            memset(&hints, 0, sizeof(hints));
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_DGRAM;
+
+            std::string port_str = std::to_string(self->dest_port);
+            int err = getaddrinfo(self->dest_host, port_str.c_str(), &hints, &res);
+            if (err == 0) {
+                memcpy(&self->dest_addr, res->ai_addr, res->ai_addrlen);
+                self->addr_resolved = TRUE;
+                freeaddrinfo(res);
+                GST_INFO_OBJECT(self, "Resolved '%s:%d' successfully.", self->dest_host, self->dest_port);
+            } else {
+                GST_WARNING_OBJECT(self, "Could not resolve hostname '%s': %s", self->dest_host, gai_strerror(err));
+            }
+        }
+
+        if (self->addr_resolved) {
+            sendto(self->udp_sock, 
+                   final_json_string.c_str(), 
+                   final_json_string.length(), 
+                   0,
+                   (struct sockaddr *)&self->dest_addr, 
+                   sizeof(self->dest_addr));
+        }
+    }
+
+    self->frame_count++;
+    GstClockTime current_time = gst_util_get_timestamp();
     
-    if (error) {
-        GST_WARNING_OBJECT(self, "Failed to send UDP packet: %s", error->message);
-        g_error_free(error);
+    if (self->last_time == GST_CLOCK_TIME_NONE) {
+        self->last_time = current_time;
     } else {
-        GST_DEBUG_OBJECT(self, "Sent %ld bytes of JSON data", json_str.length());
+        GstClockTime diff = current_time - self->last_time;
+        if (diff >= GST_SECOND) {
+            self->current_fps = (double)self->frame_count * GST_SECOND / diff;
+            GST_INFO_OBJECT(self, "FPS: %.1f", self->current_fps); 
+            self->frame_count = 0;
+            self->last_time = current_time;
+        }
     }
 
     return GST_FLOW_OK;

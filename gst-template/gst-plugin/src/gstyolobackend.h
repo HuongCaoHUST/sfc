@@ -24,7 +24,7 @@
 #define __GST_YOLO_BACKEND_H__
 
 #include <gst/base/gstbasetransform.h>
-#include <gio/gio.h> // For GSocket
+#include <netinet/in.h>
 #include "yolo_engine.h"
 
 G_BEGIN_DECLS
@@ -42,9 +42,14 @@ struct _GstYoloBackend {
 
   /* private */
   YoloEngine *yolo_engine;
-  GSocket *udp_socket;
-  GInetAddress *dest_address;
-  GInetSocketAddress *socket_address;
+  
+  int udp_sock;
+  struct sockaddr_in dest_addr;
+  gboolean addr_resolved;
+
+  guint64 frame_count;
+  GstClockTime last_time;
+  gdouble current_fps;
 };
 
 G_END_DECLS

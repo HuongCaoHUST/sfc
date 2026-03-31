@@ -129,8 +129,11 @@ std::vector<Detection> YoloEngine::run_part2_and_postprocess(const float* tensor
     std::vector<float> confidences;
     std::vector<int> class_ids;
 
-    float scale_x = (float)frame_width / input_shape[3];
-    float scale_y = (float)frame_height / input_shape[2];
+    // float scale_x = (float)frame_width / input_shape[3];
+    // float scale_y = (float)frame_height / input_shape[2];
+    const float MODEL_BASE_SIZE = 640.0f;
+    float scale_x = (float)frame_width / MODEL_BASE_SIZE;
+    float scale_y = (float)frame_height / MODEL_BASE_SIZE;
 
     for (int i = 0; i < output_mat.rows; i++) {
         float* row = output_mat.ptr<float>(i);
