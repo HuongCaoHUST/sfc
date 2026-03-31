@@ -52,6 +52,7 @@ enum
   PROP_MODEL_PATH,
   PROP_DEST_HOST,
   PROP_DEST_PORT,
+  PROP_CONF_THRESHOLD,
 };
 
 #define TENSOR_CAPS "application/x-tensor, type=(string)float32"
@@ -111,6 +112,11 @@ gst_yolo_backend_class_init (GstYoloBackendClass * klass)
           "The destination port for UDP packets.",
           0, G_MAXINT, 5005, G_PARAM_READWRITE));
 
+  g_object_class_install_property (gobject_class, PROP_CONF_THRESHOLD,
+      g_param_spec_float ("conf-threshold", "Confidence Threshold",
+          "The confidence threshold for YOLO post-processing.",
+          0.0f, 1.0f, 0.5f, G_PARAM_READWRITE));
+
   gst_element_class_add_static_pad_template (element_class, &src_template);
   gst_element_class_add_static_pad_template (element_class, &sink_template);
 
@@ -129,6 +135,7 @@ gst_yolo_backend_init (GstYoloBackend * self)
   self->model_path = g_strdup ("yolo_part2.onnx");
   self->dest_host = g_strdup("127.0.0.1");
   self->dest_port = 5005;
+  self->conf_threshold = 0.5f;
   self->yolo_engine = nullptr;
 
   // Khởi tạo POSIX socket và các biến đếm
@@ -186,6 +193,9 @@ gst_yolo_backend_set_property (GObject * object, guint prop_id,
       self->dest_port = g_value_get_int(value);
       self->addr_resolved = FALSE;
       break;
+    case PROP_CONF_THRESHOLD:
+      self->conf_threshold = g_value_get_float(value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -207,6 +217,9 @@ gst_yolo_backend_get_property (GObject * object, guint prop_id,
       break;
     case PROP_DEST_PORT:
       g_value_set_int(value, self->dest_port);
+      break;
+    case PROP_CONF_THRESHOLD:
+      g_value_set_float(value, self->conf_threshold);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -284,7 +297,7 @@ gst_yolo_backend_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
     try {
         // Since we don't have the original frame size, we assume output coordinates
         // are relative to the model input size (e.g., 640x640).
-        detections = self->yolo_engine->run_part2_and_postprocess(tensor_data, tensor_size, 640, 640, 0.5f, 0.45f);
+        detections = self->yolo_engine->run_part2_and_postprocess(tensor_data, tensor_size, 640, 640, self->conf_threshold, 0.45f);
     } catch (const std::exception& e) {
         GST_ERROR_OBJECT(self, "Backend inference/post-processing failed: %s", e.what());
         gst_buffer_unmap(buf, &map);

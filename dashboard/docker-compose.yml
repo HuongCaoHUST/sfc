@@ -157,7 +157,7 @@ services:
       gst-launch-1.0
       tcpserversrc host=0.0.0.0 port=6005 ! 
       gdpdepay ! queue max-size-buffers=2 !
-      yolobackend model="/app/yolo_part2.onnx" dest-host="ai-dashboard" dest-port=5103 ! 
+      yolobackend model="/app/yolo_part2.onnx" conf-threshold=0.8 dest-host="ai-dashboard" dest-port=5103 ! 
       fakesink sync=false
     networks:
       - video_net

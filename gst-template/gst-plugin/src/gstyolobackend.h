@@ -39,6 +39,7 @@ struct _GstYoloBackend {
   gchar *model_path;
   gchar *dest_host;
   gint dest_port;
+  gfloat conf_threshold;
 
   /* private */
   YoloEngine *yolo_engine;
