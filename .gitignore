@@ -1,2 +1,4 @@
 gst-template/libs/
 *.mp4
+*.pt
+*.jpg
