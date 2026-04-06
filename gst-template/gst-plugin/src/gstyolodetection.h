@@ -48,6 +48,9 @@ struct _Gstyolodetection {
   gchar *dest_host;       /* UDP Destination Host/IP */
   gint dest_port;         /* UDP Destination Port */
 
+  gboolean use_gpu;       /* Enable CUDA GPU acceleration */
+  gint gpu_device_id;     /* CUDA device ID */
+
   guint batch_size;       /* Batch size for inference (default 1) */
 
   YoloEngine *yolo_engine;

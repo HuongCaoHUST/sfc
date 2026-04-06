@@ -65,7 +65,9 @@ enum
   PROP_CONF_THRESHOLD,
   PROP_DEST_HOST,
   PROP_DEST_PORT,
-  PROP_BATCH_SIZE
+  PROP_BATCH_SIZE,
+  PROP_USE_GPU,
+  PROP_GPU_DEVICE_ID
 };
 
 #define SUPPORTED_CAPS "video/x-raw, " \
@@ -136,7 +138,19 @@ gst_yolodetection_class_init (GstyolodetectionClass * klass)
   g_object_class_install_property (gobject_class, PROP_BATCH_SIZE,
       g_param_spec_uint ("batch-size", "Batch Size",
           "Number of frames to accumulate before running batched inference",
-          1, 32, 1, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));      
+          1, 32, 1, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_USE_GPU,
+      g_param_spec_boolean ("use-gpu", "Use GPU",
+          "Enable CUDA GPU acceleration for inference",
+          FALSE,
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_GPU_DEVICE_ID,
+      g_param_spec_int ("gpu-device-id", "GPU Device ID",
+          "CUDA device ID to use (0 = first GPU, 1 = second, etc.)",
+          0, 15, 0,
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   gst_element_class_set_details_simple (gstelement_class,
       "yolodetection",
@@ -174,6 +188,9 @@ gst_yolodetection_init (Gstyolodetection * filter)
 
   filter->dest_host = g_strdup("127.0.0.1");
   filter->dest_port = 5002;
+
+  filter->use_gpu = FALSE;
+  filter->gpu_device_id = 0;
 
   filter->batch_size = 1;
   filter->frame_batch = new std::vector<cv::Mat>();
@@ -228,8 +245,9 @@ gst_yolodetection_set_property (GObject * object, guint prop_id,
           filter->yolo_engine = nullptr;
       }
       try {
-        filter->yolo_engine = new YoloEngine(filter->model_path);
-        GST_INFO_OBJECT(filter, "Successfully loaded ONNX model.");
+        filter->yolo_engine = new YoloEngine(filter->model_path, filter->use_gpu, filter->gpu_device_id);
+        GST_INFO_OBJECT(filter, "Successfully loaded ONNX model (GPU: %s, device: %d).",
+            filter->use_gpu ? "yes" : "no", filter->gpu_device_id);
       } catch (const std::exception& e) {
         GST_ERROR_OBJECT(filter, "Failed to load ONNX model: %s", e.what());
       }
@@ -258,6 +276,16 @@ gst_yolodetection_set_property (GObject * object, guint prop_id,
     case PROP_BATCH_SIZE:
       filter->batch_size = g_value_get_uint(value);
       GST_INFO_OBJECT(filter, "Batch size set to: %u", filter->batch_size);
+      break;
+
+    case PROP_USE_GPU:
+      filter->use_gpu = g_value_get_boolean(value);
+      GST_INFO_OBJECT(filter, "Use GPU set to: %s", filter->use_gpu ? "yes" : "no");
+      break;
+
+    case PROP_GPU_DEVICE_ID:
+      filter->gpu_device_id = g_value_get_int(value);
+      GST_INFO_OBJECT(filter, "GPU device ID set to: %d", filter->gpu_device_id);
       break;
   }
 }
@@ -289,6 +317,14 @@ gst_yolodetection_get_property (GObject * object, guint prop_id,
 
     case PROP_BATCH_SIZE:
       g_value_set_uint(value, filter->batch_size);
+      break;
+
+    case PROP_USE_GPU:
+      g_value_set_boolean(value, filter->use_gpu);
+      break;
+
+    case PROP_GPU_DEVICE_ID:
+      g_value_set_int(value, filter->gpu_device_id);
       break;
   }
 }

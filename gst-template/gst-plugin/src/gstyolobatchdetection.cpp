@@ -29,7 +29,9 @@ enum {
   PROP_MODEL_PATH,
   PROP_CONF_THRESHOLD,
   PROP_DEST_HOST,
-  PROP_DEST_PORT
+  PROP_DEST_PORT,
+  PROP_USE_GPU,
+  PROP_GPU_DEVICE_ID
 };
 
 #define SUPPORTED_CAPS "video/x-raw, " \
@@ -105,6 +107,18 @@ gst_yolobatchdetection_class_init (GstYoloBatchDetectionClass *klass)
           1, 65535, 5101,
           (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property (gobject_class, PROP_USE_GPU,
+      g_param_spec_boolean ("use-gpu", "Use GPU",
+          "Enable CUDA GPU acceleration for inference",
+          FALSE,
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_GPU_DEVICE_ID,
+      g_param_spec_int ("gpu-device-id", "GPU Device ID",
+          "CUDA device ID to use (0 = first GPU, 1 = second, etc.)",
+          0, 15, 0,
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   gst_element_class_set_details_simple (gstelement_class,
       "yolobatchdetection",
       "Video/Analyzer",
@@ -135,6 +149,8 @@ gst_yolobatchdetection_init (GstYoloBatchDetection *self)
   self->conf_threshold = 0.5f;
   self->dest_host      = g_strdup ("127.0.0.1");
   self->dest_port      = 5101;
+  self->use_gpu        = FALSE;
+  self->gpu_device_id  = 0;
   self->yolo_engine    = nullptr;
 
   self->udp_sock       = -1;
@@ -195,6 +211,12 @@ gst_yolobatchdetection_set_property (GObject *object, guint prop_id,
       self->dest_port = g_value_get_int (value);
       self->host_resolved = FALSE;
       break;
+    case PROP_USE_GPU:
+      self->use_gpu = g_value_get_boolean (value);
+      break;
+    case PROP_GPU_DEVICE_ID:
+      self->gpu_device_id = g_value_get_int (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -219,6 +241,12 @@ gst_yolobatchdetection_get_property (GObject *object, guint prop_id,
     case PROP_DEST_PORT:
       g_value_set_int (value, self->dest_port);
       break;
+    case PROP_USE_GPU:
+      g_value_set_boolean (value, self->use_gpu);
+      break;
+    case PROP_GPU_DEVICE_ID:
+      g_value_set_int (value, self->gpu_device_id);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -239,8 +267,9 @@ gst_yolobatchdetection_start (GstAggregator *agg)
   }
 
   try {
-    self->yolo_engine = new YoloEngine (self->model_path);
-    GST_INFO_OBJECT (self, "Loaded ONNX model from: %s", self->model_path);
+    self->yolo_engine = new YoloEngine (self->model_path, self->use_gpu, self->gpu_device_id);
+    GST_INFO_OBJECT (self, "Loaded ONNX model from: %s (GPU: %s, device: %d)",
+        self->model_path, self->use_gpu ? "yes" : "no", self->gpu_device_id);
   } catch (const std::exception &e) {
     GST_ERROR_OBJECT (self, "Failed to load ONNX model: %s", e.what ());
     return FALSE;

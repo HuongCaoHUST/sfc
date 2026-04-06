@@ -6,11 +6,14 @@
 #include <cstdlib>
 
 // Constructor: Loads the model and initializes the session.
-YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu) : env(ORT_LOGGING_LEVEL_WARNING, "YOLO_Engine") {
+YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_device_id) : env(ORT_LOGGING_LEVEL_WARNING, "YOLO_Engine") {
     Ort::SessionOptions session_options;
 
     if (use_gpu) {
-        // OrtSessionOptionsAppendExecutionProvider_CUDA(session_options, 0);
+        OrtCUDAProviderOptions cuda_opts;
+        memset(&cuda_opts, 0, sizeof(cuda_opts));
+        cuda_opts.device_id = gpu_device_id;
+        session_options.AppendExecutionProvider_CUDA(cuda_opts);
     }
     
     session = new Ort::Session(env, model_path.c_str(), session_options);

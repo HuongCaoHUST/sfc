@@ -14,7 +14,7 @@ struct Detection {
 
 class YoloEngine {
 public:
-    YoloEngine(const std::string& model_path, bool use_gpu = false);
+    YoloEngine(const std::string& model_path, bool use_gpu = false, int gpu_device_id = 0);
     ~YoloEngine();
 
     // For 2-part models

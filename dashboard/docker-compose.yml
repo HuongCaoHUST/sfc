@@ -100,9 +100,21 @@ services:
       - sender_4
     volumes:
       - ./yolo11n_dynamic.onnx:/app/yolo11n_dynamic.onnx
+      - ./yolo11n_half.onnx:/app/yolo11n_half.onnx
     environment:
       - GST_DEBUG=1
       - GST_DEBUG_DUMP_DOT_DIR=/tmp/gst
+    ## ---- GPU: uncomment the 4 lines below to enable GPU ----
+    # image: gst-myfilter-opencv-gpu:latest
+    # runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    ## ---- end GPU section ----
     command: >
       sh -c "
       gst-launch-1.0
@@ -122,7 +134,7 @@ services:
       rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
       videoscale ! video/x-raw,width=640,height=640 !
       queue max-size-buffers=1 leaky=downstream ! batch.sink_3
-      yolobatchdetection name=batch model-path=/app/yolo11n_dynamic.onnx conf-threshold=0.2 dest-host=ai-dashboard dest-port=5101 !
+      yolobatchdetection name=batch model-path=/app/yolo11n_half.onnx conf-threshold=0.2 dest-host=ai-dashboard dest-port=5101 use-gpu=false !
       fakesink sync=false
       "
     networks:

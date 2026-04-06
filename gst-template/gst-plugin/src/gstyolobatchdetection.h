@@ -23,6 +23,8 @@ struct _GstYoloBatchDetection {
   gfloat conf_threshold;
   gchar *dest_host;
   gint dest_port;
+  gboolean use_gpu;
+  gint gpu_device_id;
 
   /* Engine */
   YoloEngine *yolo_engine;
