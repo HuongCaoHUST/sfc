@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
 
 COPY builddir/gst-plugin/libgstmyfilter.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY builddir/gst-plugin/libgstyolodetection.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+COPY builddir/gst-plugin/libgstyolobatchdetection.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY builddir/gst-plugin/libgstyolojsonoverlay.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY builddir/gst-plugin/libgstyoloforward.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY builddir/gst-plugin/libgstyolobackend.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/

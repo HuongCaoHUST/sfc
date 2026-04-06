@@ -105,3 +105,18 @@ gstseiidinserter_plugin = library('gstseiidinserter',
   install : true,
   install_dir : plugins_install_dir,
 )
+
+# Plugin yolobatchdetection (GstAggregator-based multi-camera batch inference)
+gstyolobatchdetection_sources = [
+  'src/gstyolobatchdetection.cpp',
+  'src/yolo_engine.cpp'
+]
+
+gstyolobatchdetection_plugin = library('gstyolobatchdetection',
+  gstyolobatchdetection_sources,
+  cpp_args: plugin_c_args,
+  dependencies : [gst_dep, gstbase_dep, gstvideo_dep, opencv_dep, onnx_lib],
+  include_directories: [onnx_inc],
+  install : true,
+  install_dir : plugins_install_dir,
+)
