@@ -9,15 +9,15 @@ services:
       - .:/app
     working_dir: /app
     command: >
-      gst-launch-1.0 filesrc location=test_video.mp4 ! 
-      qtdemux ! 
-      h264parse ! 
-      avdec_h264 ! 
-      videoconvert ! 
-      videorate ! video/x-raw,framerate=25/1 ! identity sync=true ! 
+      gst-launch-1.0 filesrc location=test_video.mp4 !
+      qtdemux !
+      h264parse !
+      avdec_h264 !
+      videoconvert !
+      videorate ! video/x-raw,framerate=25/1 ! identity sync=true !
       tee name=t !
       queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam1
-      t. ! queue ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 ! 
+      t. ! queue ! videorate ! video/x-raw,framerate=8/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 !
       udpsink host=ai_detection_2 port=5000 sync=false
     networks:
       - video_net
@@ -31,15 +31,15 @@ services:
       - .:/app
     working_dir: /app
     command: >
-      gst-launch-1.0 filesrc location=test_video_3.mp4 ! 
-      qtdemux ! 
-      h264parse ! 
-      avdec_h264 ! 
-      videoconvert ! 
-      videorate ! video/x-raw,framerate=25/1 ! 
+      gst-launch-1.0 filesrc location=test_video_3.mp4 !
+      qtdemux !
+      h264parse !
+      avdec_h264 !
+      videoconvert !
+      videorate ! video/x-raw,framerate=25/1 ! identity sync=true !
       tee name=t !
       queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam2
-      t. ! queue ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 ! 
+      t. ! queue ! videorate ! video/x-raw,framerate=8/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 !
       udpsink host=ai_detection_2 port=5001 sync=false
     networks:
       - video_net
@@ -53,15 +53,15 @@ services:
       - .:/app
     working_dir: /app
     command: >
-      gst-launch-1.0 filesrc location=test_video.mp4 ! 
-      qtdemux ! 
-      h264parse ! 
-      avdec_h264 ! 
-      videoconvert ! 
-      videorate ! video/x-raw,framerate=25/1 ! identity sync=true ! 
+      gst-launch-1.0 filesrc location=test_video.mp4 !
+      qtdemux !
+      h264parse !
+      avdec_h264 !
+      videoconvert !
+      videorate ! video/x-raw,framerate=25/1 ! identity sync=true !
       tee name=t !
       queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam3
-      t. ! queue ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 ! 
+      t. ! queue ! videorate ! video/x-raw,framerate=8/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 !
       udpsink host=ai_detection_2 port=5002 sync=false
     networks:
       - video_net
@@ -75,15 +75,15 @@ services:
       - .:/app
     working_dir: /app
     command: >
-      gst-launch-1.0 filesrc location=test_video_3.mp4 ! 
-      qtdemux ! 
-      h264parse ! 
-      avdec_h264 ! 
-      videoconvert ! 
-      videorate ! video/x-raw,framerate=25/1 ! 
+      gst-launch-1.0 filesrc location=test_video_3.mp4 !
+      qtdemux !
+      h264parse !
+      avdec_h264 !
+      videoconvert !
+      videorate ! video/x-raw,framerate=25/1 ! identity sync=true !
       tee name=t !
       queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam4
-      t. ! queue ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 ! 
+      t. ! queue ! videorate ! video/x-raw,framerate=8/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 !
       udpsink host=ai_detection_2 port=5003 sync=false
     networks:
       - video_net
@@ -101,25 +101,25 @@ services:
     volumes:
       - ./yolo11n_dynamic.onnx:/app/yolo11n_dynamic.onnx
     environment:
-      - GST_DEBUG=4
+      - GST_DEBUG=1
       - GST_DEBUG_DUMP_DOT_DIR=/tmp/gst
     command: >
       sh -c "
       gst-launch-1.0
       udpsrc port=5000 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
-      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=8/1 !
+      rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
       videoscale ! video/x-raw,width=640,height=640 !
       queue max-size-buffers=1 leaky=downstream ! batch.sink_0
       udpsrc port=5001 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
-      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=8/1 !
+      rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
       videoscale ! video/x-raw,width=640,height=640 !
       queue max-size-buffers=1 leaky=downstream ! batch.sink_1
       udpsrc port=5002 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
-      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=8/1 !
+      rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
       videoscale ! video/x-raw,width=640,height=640 !
       queue max-size-buffers=1 leaky=downstream ! batch.sink_2
       udpsrc port=5003 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
-      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=8/1 !
+      rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
       videoscale ! video/x-raw,width=640,height=640 !
       queue max-size-buffers=1 leaky=downstream ! batch.sink_3
       yolobatchdetection name=batch model-path=/app/yolo11n_dynamic.onnx conf-threshold=0.2 dest-host=ai-dashboard dest-port=5101 !

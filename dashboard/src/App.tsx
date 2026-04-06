@@ -32,13 +32,44 @@ interface AIResponse {
 
 // Cấu hình WebSocket tới Container AI
 const AI_CONTAINER_WS_URL = `ws://${window.location.host}`;
+
+// Shared WebSocket singleton — tất cả camera dùng chung 1 connection
+type PredictionCallback = (predictions: AIInference[]) => void;
+const wsListeners = new Map<string, PredictionCallback>();
+let sharedWs: WebSocket | null = null;
+let wsConnecting = false;
+
+function connectSharedWS() {
+  if (sharedWs?.readyState === WebSocket.OPEN || wsConnecting) return;
+  wsConnecting = true;
+
+  const ws = new WebSocket(AI_CONTAINER_WS_URL);
+  ws.onopen = () => {
+    sharedWs = ws;
+    wsConnecting = false;
+  };
+  ws.onmessage = (event) => {
+    try {
+      const data: AIResponse = JSON.parse(event.data);
+      const cb = wsListeners.get(data.camera_id);
+      if (cb) cb(data.predictions);
+    } catch (_) {}
+  };
+  ws.onclose = () => {
+    sharedWs = null;
+    wsConnecting = false;
+    wsListeners.forEach((cb) => cb([]));
+    setTimeout(connectSharedWS, 2000);
+  };
+  ws.onerror = () => ws.close();
+}
+connectSharedWS();
 // ==========================================
 // COMPONENT: Xử lý WebRTC & AI Bounding Box
 // ==========================================
 const WebRTCCamera = ({ streamUrl, camId }: { streamUrl: string; camId: string }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   const [streamError, setStreamError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<boolean>(false);
@@ -93,48 +124,21 @@ const WebRTCCamera = ({ streamUrl, camId }: { streamUrl: string; camId: string }
     };
   }, [streamUrl]);
 
-  // 2. Kết nối WebSocket (AI Data)
+  // 2. Kết nối WebSocket (AI Data) — dùng shared connection
   useEffect(() => {
-    const connectWS = () => {
-      const ws = new WebSocket(AI_CONTAINER_WS_URL);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log('✅ AI Connected');
-        setAiError(false);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data: AIResponse = JSON.parse(event.data);
-          console.log("RAW JSON:", data);
-          if (data && data.camera_id === camId) {
-            setPredictions(data.predictions);
-          }
-        } catch (e) {
-        }
-      };
-
-      ws.onerror = () => {
-        setAiError(true);
-        setPredictions([]); // Xóa box cũ nếu lỗi
-      };
-      
-      ws.onclose = () => {
-        setAiError(true);
-        setPredictions([]); // Xóa box cũ nếu đứt kết nối
-        setTimeout(connectWS, 2000); // Thử lại sau 2s
-      };
+    const cb: PredictionCallback = (preds) => {
+      setPredictions(preds);
+      setAiError(false);
     };
-
-    connectWS();
+    wsListeners.set(camId, cb);
+    connectSharedWS();
 
     return () => {
-      wsRef.current?.close();
+      wsListeners.delete(camId);
     };
   }, [camId]);
 
-  // 3. Vẽ Bounding Box
+  // 3. Vẽ Bounding Box — chỉ vẽ lại khi predictions thay đổi
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -143,82 +147,62 @@ const WebRTCCamera = ({ streamUrl, camId }: { streamUrl: string; camId: string }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const drawBoxes = () => {
-      // 1. Cập nhật kích thước vật lý của canvas bằng với kích thước hiển thị của thẻ video
-      canvas.width = video.clientWidth;
-      canvas.height = video.clientHeight;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Cập nhật kích thước vật lý của canvas bằng với kích thước hiển thị của thẻ video
+    canvas.width = video.clientWidth;
+    canvas.height = video.clientHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      if (aiError || predictions.length === 0 || !video.videoWidth) return;
+    if (aiError || predictions.length === 0 || !video.videoWidth) return;
 
-      // 2. Tính toán tỷ lệ khung hình
-      const videoRatio = video.videoWidth / video.videoHeight; // Tỷ lệ video gốc (VD: 640/480 = 1.333)
-      const canvasRatio = canvas.width / canvas.height;        // Tỷ lệ vùng chứa trên web
+    // Tính toán tỷ lệ khung hình
+    const videoRatio = video.videoWidth / video.videoHeight;
+    const canvasRatio = canvas.width / canvas.height;
 
-      let drawWidth, drawHeight; // Kích thước thực tế của vùng có hình ảnh trên màn hình
-      let offsetX = 0;           // Khoảng cách viền đen thừa bên trái/phải
-      let offsetY = 0;           // Khoảng cách viền đen thừa bên trên/dưới
+    let drawWidth, drawHeight;
+    let offsetX = 0;
+    let offsetY = 0;
 
-      // 3. Tìm vùng hiển thị thực tế dựa theo CSS "object-contain"
-      if (videoRatio > canvasRatio) {
-        // Video "dẹp" hơn vùng chứa -> Bị kịch chiều ngang, dư viền đen trên/dưới
-        drawWidth = canvas.width;
-        drawHeight = canvas.width / videoRatio;
-        offsetY = (canvas.height - drawHeight) / 2;
-      } else {
-        // Video "vuông" hơn vùng chứa -> Bị kịch chiều dọc, dư viền đen trái/phải
-        drawHeight = canvas.height;
-        drawWidth = canvas.height * videoRatio;
-        offsetX = (canvas.width - drawWidth) / 2;
-      }
+    if (videoRatio > canvasRatio) {
+      drawWidth = canvas.width;
+      drawHeight = canvas.width / videoRatio;
+      offsetY = (canvas.height - drawHeight) / 2;
+    } else {
+      drawHeight = canvas.height;
+      drawWidth = canvas.height * videoRatio;
+      offsetX = (canvas.width - drawWidth) / 2;
+    }
 
-      // 4. Tính toán tỷ lệ scale.
-      // Tọa độ box (box.x, box.y) được GStreamer tính trên một khung hình 640x640 cố định.
-      // Vì vậy, chúng ta phải chia cho 640 để có được tỷ lệ scale chính xác.
-      const inferenceWidth = 640;
-      const inferenceHeight = 640;
-      const scaleX = drawWidth / inferenceWidth;
-      const scaleY = drawHeight / inferenceHeight;
+    const inferenceWidth = 640;
+    const inferenceHeight = 640;
+    const scaleX = drawWidth / inferenceWidth;
+    const scaleY = drawHeight / inferenceHeight;
 
-      predictions.forEach(box => {
-        // 5. Tính tọa độ cuối cùng: Phải cộng thêm Offset (viền đen) vào
-        const scaledX = (box.x * scaleX) + offsetX;
-        const scaledY = (box.y * scaleY) + offsetY;
-        const scaledW = box.width * scaleX;
-        const scaledH = box.height * scaleY;
+    predictions.forEach(box => {
+      const scaledX = (box.x * scaleX) + offsetX;
+      const scaledY = (box.y * scaleY) + offsetY;
+      const scaledW = box.width * scaleX;
+      const scaledH = box.height * scaleY;
 
-        const color = box.class_id === 1 ? '#00ff00' : '#ff3333';
+      const color = box.class_id === 1 ? '#00ff00' : '#ff3333';
 
-        // Vẽ khung
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = color;
-        ctx.fillStyle = color + '22';
-        ctx.beginPath();
-        ctx.rect(scaledX, scaledY, scaledW, scaledH);
-        ctx.stroke();
-        ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color + '22';
+      ctx.beginPath();
+      ctx.rect(scaledX, scaledY, scaledW, scaledH);
+      ctx.stroke();
+      ctx.fill();
 
-        // Vẽ nhãn
-        ctx.fillStyle = color;
-        ctx.font = 'bold 11px monospace';
-        const confPercent = (box.confidence * 100).toFixed(0);
-        const labelText = `${box.class} ${confPercent}%`;
-        const textWidth = ctx.measureText(labelText).width;
+      ctx.fillStyle = color;
+      ctx.font = 'bold 11px monospace';
+      const confPercent = (box.confidence * 100).toFixed(0);
+      const labelText = `${box.class} ${confPercent}%`;
+      const textWidth = ctx.measureText(labelText).width;
 
-        ctx.fillRect(scaledX, scaledY - 18, textWidth + 8, 18);
-        ctx.fillStyle = '#000000';
-        ctx.fillText(labelText, scaledX + 4, scaledY - 5);
-      });
-    };
-
-    let animationFrameId: number;
-    const render = () => {
-      drawBoxes();
-      animationFrameId = requestAnimationFrame(render);
-    };
-    render();
-
-    return () => cancelAnimationFrame(animationFrameId);
+      ctx.fillRect(scaledX, scaledY - 18, textWidth + 8, 18);
+      ctx.fillStyle = '#000000';
+      ctx.fillText(labelText, scaledX + 4, scaledY - 5);
+    });
   }, [predictions, aiError]);
 
   // Nếu bản thân Camera (MediaMTX) chết, hiện lỗi to ở giữa
