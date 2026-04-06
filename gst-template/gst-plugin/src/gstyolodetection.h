@@ -44,9 +44,11 @@ struct _Gstyolodetection {
 
   gchar *model_path;      /* Model path */
   gfloat conf_threshold;  /* Confidence threshold */
-  
+
   gchar *dest_host;       /* UDP Destination Host/IP */
   gint dest_port;         /* UDP Destination Port */
+
+  guint batch_size;       /* Batch size for inference (default 1) */
 
   YoloEngine *yolo_engine;
   GstVideoInfo *video_info;
@@ -58,6 +60,10 @@ struct _Gstyolodetection {
   int udp_sock;
   struct sockaddr_in dest_addr;
   gboolean addr_resolved;
+
+  /* Batch accumulation (heap-allocated, GObject doesn't call C++ ctors) */
+  std::vector<cv::Mat> *frame_batch;
+  std::vector<GstClockTime> *pts_batch;
 };
 
 G_END_DECLS

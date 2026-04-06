@@ -22,6 +22,10 @@ public:
     std::vector<Detection> run_part2_and_postprocess(const float* tensor_data, size_t tensor_size,
         int frame_width, int frame_height, float conf_threshold = 0.5f, float nms_threshold = 0.45f);
 
+    // For batched inference (N frames at once)
+    std::vector<std::vector<Detection>> detect_batch(std::vector<cv::Mat>& frames,
+        float conf_threshold = 0.5f, float nms_threshold = 0.45f);
+
     // For single-shot models (legacy plugins)
     std::vector<Detection> detect(cv::Mat& frame, float conf_threshold = 0.5f, float nms_threshold = 0.45f);
 

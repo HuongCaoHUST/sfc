@@ -170,6 +170,97 @@ std::vector<Detection> YoloEngine::run_part2_and_postprocess(const float* tensor
     return results; 
 }
 
+// For batched inference (N frames at once)
+std::vector<std::vector<Detection>> YoloEngine::detect_batch(
+    std::vector<cv::Mat>& frames, float conf_threshold, float nms_threshold) {
+
+    if (!session || frames.empty()) {
+        return {};
+    }
+
+    int N = static_cast<int>(frames.size());
+
+    // --- Pre-processing (batch) ---
+    cv::Mat blob;
+    cv::dnn::blobFromImages(frames, blob, 1.0 / 255.0,
+        cv::Size((int)input_shape[3], (int)input_shape[2]),
+        cv::Scalar(), true, false);
+
+    // Local copy of shape with batch dimension set to N
+    std::vector<int64_t> batch_shape = input_shape;
+    batch_shape[0] = static_cast<int64_t>(N);
+
+    // --- Inference ---
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+        memory_info, blob.ptr<float>(), blob.total(),
+        batch_shape.data(), batch_shape.size());
+
+    auto output_tensors = session->Run(
+        Ort::RunOptions{nullptr},
+        input_names_char.data(), &input_tensor, 1,
+        output_names_char.data(), 1);
+
+    // --- Post-processing (per image) ---
+    const float* raw_output = output_tensors[0].GetTensorData<float>();
+    auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
+
+    int num_components = static_cast<int>(output_shape[1]); // 84
+    int num_detections = static_cast<int>(output_shape[2]); // 8400
+    size_t per_image_floats = static_cast<size_t>(num_components) * num_detections;
+
+    std::vector<std::vector<Detection>> all_results(N);
+
+    for (int img = 0; img < N; img++) {
+        const float* img_data = raw_output + img * per_image_floats;
+
+        cv::Mat output_mat(num_components, num_detections, CV_32F,
+                           const_cast<float*>(img_data));
+        output_mat = output_mat.t();
+
+        float scale_x = (float)frames[img].cols / input_shape[3];
+        float scale_y = (float)frames[img].rows / input_shape[2];
+
+        std::vector<cv::Rect> boxes;
+        std::vector<float> confidences;
+        std::vector<int> class_ids;
+
+        for (int i = 0; i < output_mat.rows; i++) {
+            float* row = output_mat.ptr<float>(i);
+            cv::Mat scores(1, num_components - 4, CV_32F, row + 4);
+            cv::Point class_id_point;
+            double max_score;
+            cv::minMaxLoc(scores, nullptr, &max_score, nullptr, &class_id_point);
+
+            if (max_score >= conf_threshold) {
+                confidences.push_back(static_cast<float>(max_score));
+                class_ids.push_back(class_id_point.x);
+
+                float cx = row[0];
+                float cy = row[1];
+                float w = row[2];
+                float h = row[3];
+
+                int left = static_cast<int>((cx - 0.5 * w) * scale_x);
+                int top = static_cast<int>((cy - 0.5 * h) * scale_y);
+                int width = static_cast<int>(w * scale_x);
+                int height = static_cast<int>(h * scale_y);
+
+                boxes.push_back(cv::Rect(left, top, width, height));
+            }
+        }
+
+        std::vector<int> nms_indices;
+        cv::dnn::NMSBoxes(boxes, confidences, conf_threshold, nms_threshold, nms_indices);
+
+        for (int idx : nms_indices) {
+            all_results[img].push_back({boxes[idx], confidences[idx], class_ids[idx]});
+        }
+    }
+
+    return all_results;
+}
+
 // For single-shot models (legacy plugins)
 std::vector<Detection> YoloEngine::detect(cv::Mat& frame, float conf_threshold, float nms_threshold) {
     if (!session) {

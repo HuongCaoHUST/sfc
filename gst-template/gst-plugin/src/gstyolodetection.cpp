@@ -64,7 +64,8 @@ enum
   PROP_MODEL_PATH,
   PROP_CONF_THRESHOLD,
   PROP_DEST_HOST,
-  PROP_DEST_PORT
+  PROP_DEST_PORT,
+  PROP_BATCH_SIZE
 };
 
 #define SUPPORTED_CAPS "video/x-raw, " \
@@ -99,6 +100,8 @@ static gboolean gst_yolodetection_set_caps (GstBaseTransform * trans, GstCaps * 
 
 static GstFlowReturn gst_yolodetection_transform_ip (GstBaseTransform *
     base, GstBuffer * outbuf);
+static gboolean gst_yolodetection_sink_event (GstBaseTransform * trans,
+    GstEvent * event);
 
 /* GObject vmethod implementations */
 static void
@@ -128,7 +131,12 @@ gst_yolodetection_class_init (GstyolodetectionClass * klass)
 
   g_object_class_install_property (gobject_class, PROP_DEST_PORT,
       g_param_spec_int ("dest-port", "Destination Port", "Destination port for JSON UDP stream",
-          1, 65535, 5002, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));      
+          1, 65535, 5002, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (gobject_class, PROP_BATCH_SIZE,
+      g_param_spec_uint ("batch-size", "Batch Size",
+          "Number of frames to accumulate before running batched inference",
+          1, 32, 1, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));      
 
   gst_element_class_set_details_simple (gstelement_class,
       "yolodetection",
@@ -144,6 +152,8 @@ gst_yolodetection_class_init (GstyolodetectionClass * klass)
       GST_DEBUG_FUNCPTR (gst_yolodetection_set_caps);
   GST_BASE_TRANSFORM_CLASS (klass)->transform_ip =
       GST_DEBUG_FUNCPTR (gst_yolodetection_transform_ip);
+  GST_BASE_TRANSFORM_CLASS (klass)->sink_event =
+      GST_DEBUG_FUNCPTR (gst_yolodetection_sink_event);
 
   GST_DEBUG_CATEGORY_INIT (gst_yolodetection_debug, "yolodetection", 0,
       "Template yolodetection");
@@ -164,6 +174,10 @@ gst_yolodetection_init (Gstyolodetection * filter)
 
   filter->dest_host = g_strdup("127.0.0.1");
   filter->dest_port = 5002;
+
+  filter->batch_size = 1;
+  filter->frame_batch = new std::vector<cv::Mat>();
+  filter->pts_batch = new std::vector<GstClockTime>();
 
   // UDP Socket
   filter->udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -187,6 +201,12 @@ static void gst_yolodetection_finalize (GObject * object)
         delete filter->yolo_engine;
         filter->yolo_engine = nullptr;
     }
+
+    delete filter->frame_batch;
+    filter->frame_batch = nullptr;
+    delete filter->pts_batch;
+    filter->pts_batch = nullptr;
+
     gst_video_info_free(filter->video_info);
 
     G_OBJECT_CLASS (parent_class)->finalize (object);
@@ -234,6 +254,11 @@ gst_yolodetection_set_property (GObject * object, guint prop_id,
       filter->addr_resolved = FALSE;
       GST_INFO_OBJECT(filter, "Destination port set to: %d", filter->dest_port);
       break;
+
+    case PROP_BATCH_SIZE:
+      filter->batch_size = g_value_get_uint(value);
+      GST_INFO_OBJECT(filter, "Batch size set to: %u", filter->batch_size);
+      break;
   }
 }
 
@@ -261,6 +286,10 @@ gst_yolodetection_get_property (GObject * object, guint prop_id,
     case PROP_DEST_PORT:
       g_value_set_int(value, filter->dest_port);
       break;
+
+    case PROP_BATCH_SIZE:
+      g_value_set_uint(value, filter->batch_size);
+      break;
   }
 }
 
@@ -274,30 +303,35 @@ static gboolean gst_yolodetection_set_caps (GstBaseTransform * trans, GstCaps * 
     return TRUE;
 }
 
-/* GstBaseTransform vmethod implementations */
-static GstFlowReturn
-gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
+/* Helper: resolve UDP address if needed */
+static void
+ensure_udp_resolved (Gstyolodetection *filter)
 {
-  Gstyolodetection *filter = GST_YOLODETECTION (base);
-  GstMapInfo map;
+    if (filter->udp_sock >= 0 && !filter->addr_resolved) {
+        struct addrinfo hints, *res;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
 
-  if (!filter->yolo_engine) {
-    GST_WARNING_OBJECT(filter, "YOLO engine not initialized, passing buffer through.");
-    return GST_FLOW_OK;
-  }
-  
-  if (gst_buffer_map (outbuf, &map, (GstMapFlags)GST_MAP_READWRITE)) {
-    int width = GST_VIDEO_INFO_WIDTH(filter->video_info);
-    int height = GST_VIDEO_INFO_HEIGHT(filter->video_info);
+        std::string port_str = std::to_string(filter->dest_port);
+        int err = getaddrinfo(filter->dest_host, port_str.c_str(), &hints, &res);
+        if (err == 0) {
+            memcpy(&filter->dest_addr, res->ai_addr, res->ai_addrlen);
+            filter->addr_resolved = TRUE;
+            freeaddrinfo(res);
+            GST_INFO_OBJECT(filter, "Resolved '%s:%d' successfully.", filter->dest_host, filter->dest_port);
+        } else {
+            GST_WARNING_OBJECT(filter, "Could not resolve hostname '%s': %s", filter->dest_host, gai_strerror(err));
+        }
+    }
+}
 
-    // Assuming BGR format as per caps
-    cv::Mat frame(height, width, CV_8UC3, map.data);
-
-    // Perform detection
-    auto detections = filter->yolo_engine->detect(frame, filter->conf_threshold);
-
-    GstClockTime current_pts = GST_BUFFER_PTS(outbuf);
-    guint64 pts_val = (current_pts == GST_CLOCK_TIME_NONE) ? 0 : (guint64)current_pts;
+/* Helper: build JSON and send one frame's detections via UDP */
+static void
+send_detection_udp (Gstyolodetection *filter,
+    const std::vector<Detection>& detections, GstClockTime pts)
+{
+    guint64 pts_val = (pts == GST_CLOCK_TIME_NONE) ? 0 : (guint64)pts;
 
     std::stringstream json_ss;
     json_ss << "{\n";
@@ -305,8 +339,7 @@ gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
     json_ss << "  \"predictions\": [\n";
     for(size_t i = 0; i < detections.size(); ++i) {
         const auto& d = detections[i];
-        std::string class_name = "Class_" + std::to_string(d.class_id); 
-        
+        std::string class_name = "Class_" + std::to_string(d.class_id);
         std::string detection_id = "uuid-" + std::to_string(filter->frame_count) + "-" + std::to_string(i);
 
         json_ss << "    {\n"
@@ -328,54 +361,135 @@ gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
     json_ss << "  ]\n}";
     std::string final_json_string = json_ss.str();
 
-    if (filter->udp_sock >= 0) {
-        if (!filter->addr_resolved) {
-            struct addrinfo hints, *res;
-            memset(&hints, 0, sizeof(hints));
-            hints.ai_family = AF_INET;
-            hints.ai_socktype = SOCK_DGRAM;
-
-            std::string port_str = std::to_string(filter->dest_port);
-            int err = getaddrinfo(filter->dest_host, port_str.c_str(), &hints, &res);
-            if (err == 0) {
-                memcpy(&filter->dest_addr, res->ai_addr, res->ai_addrlen);
-                filter->addr_resolved = TRUE;
-                freeaddrinfo(res);
-                GST_INFO_OBJECT(filter, "Resolved '%s:%d' successfully.", filter->dest_host, filter->dest_port);
-            } else {
-                GST_WARNING_OBJECT(filter, "Could not resolve hostname '%s': %s", filter->dest_host, gai_strerror(err));
-            }
-        }
-
-        if (filter->addr_resolved) {
-            sendto(filter->udp_sock, 
-                   final_json_string.c_str(), 
-                   final_json_string.length(), 
-                   0,
-                   (struct sockaddr *)&filter->dest_addr, 
-                   sizeof(filter->dest_addr));
-        }
+    if (filter->udp_sock >= 0 && filter->addr_resolved) {
+        sendto(filter->udp_sock,
+               final_json_string.c_str(),
+               final_json_string.length(),
+               0,
+               (struct sockaddr *)&filter->dest_addr,
+               sizeof(filter->dest_addr));
     }
 
     filter->frame_count++;
+}
+
+/* Helper: flush accumulated batch — run batch inference + send all UDP */
+static void
+flush_batch (Gstyolodetection *filter)
+{
+    if (!filter->frame_batch || filter->frame_batch->empty()) return;
+    if (!filter->yolo_engine) return;
+
+    try {
+        auto batch_results = filter->yolo_engine->detect_batch(
+            *filter->frame_batch, filter->conf_threshold);
+
+        for (size_t i = 0; i < batch_results.size(); i++) {
+            send_detection_udp(filter, batch_results[i], (*filter->pts_batch)[i]);
+        }
+    } catch (const std::exception& e) {
+        GST_ERROR_OBJECT(filter, "Batch inference failed: %s", e.what());
+    }
+
+    filter->frame_batch->clear();
+    filter->pts_batch->clear();
+}
+
+/* Helper: update FPS counter */
+static void
+update_fps (Gstyolodetection *filter)
+{
     GstClockTime current_time = gst_util_get_timestamp();
-    
+
     if (filter->last_time == GST_CLOCK_TIME_NONE) {
         filter->last_time = current_time;
     } else {
         GstClockTime diff = current_time - filter->last_time;
         if (diff >= GST_SECOND) {
             filter->current_fps = (double)filter->frame_count * GST_SECOND / diff;
-            GST_INFO_OBJECT(filter, "FPS: %.1f", filter->current_fps); // Ghi log
+            GST_INFO_OBJECT(filter, "FPS: %.1f", filter->current_fps);
             filter->frame_count = 0;
             filter->last_time = current_time;
         }
     }
+}
 
-    gst_buffer_unmap (outbuf, &map);
+/* GstBaseTransform vmethod implementations */
+static GstFlowReturn
+gst_yolodetection_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
+{
+  Gstyolodetection *filter = GST_YOLODETECTION (base);
+  GstMapInfo map;
+
+  if (!filter->yolo_engine) {
+    GST_WARNING_OBJECT(filter, "YOLO engine not initialized, passing buffer through.");
+    return GST_FLOW_OK;
+  }
+
+  ensure_udp_resolved(filter);
+
+  if (filter->batch_size <= 1) {
+    /* === SINGLE FRAME PATH (original behavior, zero regression) === */
+    if (gst_buffer_map (outbuf, &map, (GstMapFlags)GST_MAP_READWRITE)) {
+      int width = GST_VIDEO_INFO_WIDTH(filter->video_info);
+      int height = GST_VIDEO_INFO_HEIGHT(filter->video_info);
+
+      cv::Mat frame(height, width, CV_8UC3, map.data);
+      auto detections = filter->yolo_engine->detect(frame, filter->conf_threshold);
+
+      send_detection_udp(filter, detections, GST_BUFFER_PTS(outbuf));
+      update_fps(filter);
+
+      gst_buffer_unmap (outbuf, &map);
+    }
+  } else {
+    /* === BATCH PATH === */
+    if (gst_buffer_map (outbuf, &map, GST_MAP_READ)) {
+      int width = GST_VIDEO_INFO_WIDTH(filter->video_info);
+      int height = GST_VIDEO_INFO_HEIGHT(filter->video_info);
+
+      cv::Mat frame(height, width, CV_8UC3, map.data);
+      filter->frame_batch->push_back(frame.clone());
+      filter->pts_batch->push_back(GST_BUFFER_PTS(outbuf));
+
+      gst_buffer_unmap (outbuf, &map);
+    }
+
+    if (filter->frame_batch->size() >= filter->batch_size) {
+      flush_batch(filter);
+      update_fps(filter);
+    }
   }
 
   return GST_FLOW_OK;
+}
+
+
+/* Handle EOS and FLUSH_STOP for batch flushing */
+static gboolean
+gst_yolodetection_sink_event (GstBaseTransform * trans, GstEvent * event)
+{
+  Gstyolodetection *filter = GST_YOLODETECTION (trans);
+
+  switch (GST_EVENT_TYPE (event)) {
+    case GST_EVENT_EOS:
+      GST_DEBUG_OBJECT (filter, "EOS received, flushing %zu pending frames",
+          filter->frame_batch->size());
+      flush_batch (filter);
+      break;
+
+    case GST_EVENT_FLUSH_STOP:
+      GST_DEBUG_OBJECT (filter, "FLUSH_STOP, discarding %zu pending frames",
+          filter->frame_batch->size());
+      filter->frame_batch->clear();
+      filter->pts_batch->clear();
+      break;
+
+    default:
+      break;
+  }
+
+  return GST_BASE_TRANSFORM_CLASS (parent_class)->sink_event (trans, event);
 }
 
 
