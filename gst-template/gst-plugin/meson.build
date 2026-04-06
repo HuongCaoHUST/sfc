@@ -92,3 +92,16 @@ gstyolobackend_plugin = library('gstyolobackend',
   install : true,
   install_dir : plugins_install_dir,
 )
+
+# Plugin seiidinserter
+gstseiidinserter_sources = [
+  'src/gstseiidinserter.cpp'
+]
+
+gstseiidinserter_plugin = library('gstseiidinserter',
+  gstseiidinserter_sources,
+  cpp_args: plugin_c_args,
+  dependencies : [gst_dep, gstbase_dep, gstvideo_dep],
+  install : true,
+  install_dir : plugins_install_dir,
+)
