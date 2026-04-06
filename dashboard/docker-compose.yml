@@ -2,9 +2,9 @@ version: '3.8'
 
 services:
 
-  sender_2:
+  sender_1:
     image: restreamio/gstreamer:latest-dev
-    container_name: video_sender_2
+    container_name: video_sender_1
     volumes:
       - .:/app
     working_dir: /app
@@ -16,9 +16,53 @@ services:
       videoconvert ! 
       videorate ! video/x-raw,framerate=25/1 ! identity sync=true ! 
       tee name=t !
-      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam2 
+      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam1
       t. ! queue ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 ! 
-      udpsink host=ai_detection_2 port=5000 sync=true
+      udpsink host=ai_detection_2 port=5000 sync=false
+    networks:
+      - video_net
+    depends_on:
+      - mediamtx
+
+  sender_2:
+    image: restreamio/gstreamer:latest-dev
+    container_name: video_sender_2
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: >
+      gst-launch-1.0 filesrc location=test_video_3.mp4 ! 
+      qtdemux ! 
+      h264parse ! 
+      avdec_h264 ! 
+      videoconvert ! 
+      videorate ! video/x-raw,framerate=25/1 ! 
+      tee name=t !
+      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam2
+      t. ! queue ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 ! 
+      udpsink host=ai_detection_2 port=5001 sync=false
+    networks:
+      - video_net
+    depends_on:
+      - mediamtx
+
+  sender_3:
+    image: restreamio/gstreamer:latest-dev
+    container_name: video_sender_3
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: >
+      gst-launch-1.0 filesrc location=test_video.mp4 ! 
+      qtdemux ! 
+      h264parse ! 
+      avdec_h264 ! 
+      videoconvert ! 
+      videorate ! video/x-raw,framerate=25/1 ! identity sync=true ! 
+      tee name=t !
+      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam3
+      t. ! queue ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 ! 
+      udpsink host=ai_detection_2 port=5002 sync=false
     networks:
       - video_net
     depends_on:
@@ -40,7 +84,7 @@ services:
       tee name=t !
       queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam4
       t. ! queue ! videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 ! 
-      udpsink host=yolo-forward port=5000 sync=false
+      udpsink host=ai_detection_2 port=5003 sync=false
     networks:
       - video_net
     depends_on:
@@ -50,20 +94,35 @@ services:
     image: gst-myfilter-opencv:latest
     container_name: ai_detection_2
     depends_on:
+      - sender_1
       - sender_2
+      - sender_3
+      - sender_4
     volumes:
-      - ./yolo11n.onnx:/app/yolo11n.onnx 
+      - ./yolo11n_dynamic.onnx:/app/yolo11n_dynamic.onnx
     environment:
       - GST_DEBUG=4
       - GST_DEBUG_DUMP_DOT_DIR=/tmp/gst
     command: >
       sh -c "
       gst-launch-1.0
-      udpsrc port=5000 buffer-size=2097152 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" ! 
-      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=25/1 !
+      udpsrc port=5000 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
+      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=8/1 !
       videoscale ! video/x-raw,width=640,height=640 !
-      queue max-size-buffers=1 leaky=downstream !
-      yolodetection model-path="/app/yolo11n.onnx" conf-threshold=0.2 dest-host="ai-dashboard" dest-port=5102 ! 
+      queue max-size-buffers=1 leaky=downstream ! batch.sink_0
+      udpsrc port=5001 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
+      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=8/1 !
+      videoscale ! video/x-raw,width=640,height=640 !
+      queue max-size-buffers=1 leaky=downstream ! batch.sink_1
+      udpsrc port=5002 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
+      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=8/1 !
+      videoscale ! video/x-raw,width=640,height=640 !
+      queue max-size-buffers=1 leaky=downstream ! batch.sink_2
+      udpsrc port=5003 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
+      rtph264depay ! avdec_h264 ! videoconvert ! videorate ! video/x-raw,format=BGR,framerate=8/1 !
+      videoscale ! video/x-raw,width=640,height=640 !
+      queue max-size-buffers=1 leaky=downstream ! batch.sink_3
+      yolobatchdetection name=batch model-path=/app/yolo11n_dynamic.onnx conf-threshold=0.2 dest-host=ai-dashboard dest-port=5101 !
       fakesink sync=false
       "
     networks:
@@ -84,7 +143,7 @@ services:
     container_name: ai_surveillance_dashboard
     ports:
       - "3000:3000"
-      - "5002:5002/udp"
+      - "5101:5101/udp"
     environment:
       - NODE_ENV=production
     networks:

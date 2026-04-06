@@ -29,7 +29,7 @@ enum {
   PROP_MODEL_PATH,
   PROP_CONF_THRESHOLD,
   PROP_DEST_HOST,
-  PROP_BASE_PORT
+  PROP_DEST_PORT
 };
 
 #define SUPPORTED_CAPS "video/x-raw, " \
@@ -99,9 +99,9 @@ gst_yolobatchdetection_class_init (GstYoloBatchDetectionClass *klass)
           "127.0.0.1",
           (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
-  g_object_class_install_property (gobject_class, PROP_BASE_PORT,
-      g_param_spec_int ("base-port", "Base Port",
-          "Base UDP port. Each sink pad sends to base-port + pad_index",
+  g_object_class_install_property (gobject_class, PROP_DEST_PORT,
+      g_param_spec_int ("dest-port", "Destination Port",
+          "UDP port to send all detection results to",
           1, 65535, 5101,
           (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
@@ -134,7 +134,7 @@ gst_yolobatchdetection_init (GstYoloBatchDetection *self)
   self->model_path     = NULL;
   self->conf_threshold = 0.5f;
   self->dest_host      = g_strdup ("127.0.0.1");
-  self->base_port      = 5101;
+  self->dest_port      = 5101;
   self->yolo_engine    = nullptr;
 
   self->udp_sock       = -1;
@@ -191,8 +191,8 @@ gst_yolobatchdetection_set_property (GObject *object, guint prop_id,
       self->dest_host = g_value_dup_string (value);
       self->host_resolved = FALSE;
       break;
-    case PROP_BASE_PORT:
-      self->base_port = g_value_get_int (value);
+    case PROP_DEST_PORT:
+      self->dest_port = g_value_get_int (value);
       self->host_resolved = FALSE;
       break;
     default:
@@ -216,8 +216,8 @@ gst_yolobatchdetection_get_property (GObject *object, guint prop_id,
     case PROP_DEST_HOST:
       g_value_set_string (value, self->dest_host);
       break;
-    case PROP_BASE_PORT:
-      g_value_set_int (value, self->base_port);
+    case PROP_DEST_PORT:
+      g_value_set_int (value, self->dest_port);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -292,7 +292,7 @@ ensure_host_resolved (GstYoloBatchDetection *self)
   hints.ai_family   = AF_INET;
   hints.ai_socktype = SOCK_DGRAM;
 
-  std::string port_str = std::to_string (self->base_port);
+  std::string port_str = std::to_string (self->dest_port);
   int err = getaddrinfo (self->dest_host, port_str.c_str (), &hints, &res);
   if (err == 0) {
     memcpy (&self->resolved_addr, res->ai_addr, res->ai_addrlen);
@@ -461,10 +461,9 @@ gst_yolobatchdetection_aggregate (GstAggregator *agg, gboolean timeout)
 
   /* --- Step 5: Send per-pad UDP results --- */
   for (size_t i = 0; i < batch_results.size (); i++) {
-    int port = self->base_port + (int) pad_indices[i];
-    send_detection_udp_to_port (self, batch_results[i], port, pad_indices[i]);
+    send_detection_udp_to_port (self, batch_results[i], self->dest_port, pad_indices[i]);
     GST_DEBUG_OBJECT (self, "Sent %zu detections for sink_%u to port %d",
-        batch_results[i].size (), pad_indices[i], port);
+        batch_results[i].size (), pad_indices[i], self->dest_port);
   }
 
   /* --- Step 6: Update FPS --- */

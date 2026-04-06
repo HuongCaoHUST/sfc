@@ -23,39 +23,33 @@ wss.on('connection', (ws) => {
   ws.on('close', () => { reactClients = reactClients.filter(c => c !== ws); });
 });
 
-const START_PORT = 5101;
-const NUM_CAMS = 8;
+const UDP_PORT = 5101;
+const udpSocket = dgram.createSocket('udp4');
 
-for (let i = 0; i < NUM_CAMS; i++) {
-  const port = START_PORT + i;
-  const camId = `cam${i + 1}`;
-  
-  const udpSocket = dgram.createSocket('udp4');
+udpSocket.on('message', (msg) => {
+  try {
+    const rawData = JSON.parse(msg.toString('utf-8'));
+    const camId = `cam${(rawData.pad_index || 0) + 1}`;
 
-  udpSocket.on('message', (msg) => {
-    try {
-      const rawData = JSON.parse(msg.toString('utf-8'));
-    
-      const packet = {
-        camera_id: camId,
-        predictions: rawData.predictions || []
-      };
+    const packet = {
+      camera_id: camId,
+      predictions: rawData.predictions || []
+    };
 
-      const jsonString = JSON.stringify(packet);
-      reactClients.forEach(client => {
-        if (client.readyState === 1) client.send(jsonString);
-      });
-    } catch (err) {
-      console.error(`❌ Lỗi format JSON tại port ${port}`);
-    }
-  });
+    const jsonString = JSON.stringify(packet);
+    reactClients.forEach(client => {
+      if (client.readyState === 1) client.send(jsonString);
+    });
+  } catch (err) {
+    console.error(`❌ Lỗi format JSON tại port ${UDP_PORT}`);
+  }
+});
 
-  udpSocket.on('listening', () => {
-    console.log(`🚀 [UDP] ${camId.toUpperCase()} đang đợi tại port ${port}`);
-  });
+udpSocket.on('listening', () => {
+  console.log(`🚀 [UDP] Đang đợi detection tại port ${UDP_PORT}`);
+});
 
-  udpSocket.bind(port);
-}
+udpSocket.bind(UDP_PORT);
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));

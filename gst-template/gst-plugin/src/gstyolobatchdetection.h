@@ -22,7 +22,7 @@ struct _GstYoloBatchDetection {
   gchar *model_path;
   gfloat conf_threshold;
   gchar *dest_host;
-  gint base_port;
+  gint dest_port;
 
   /* Engine */
   YoloEngine *yolo_engine;
