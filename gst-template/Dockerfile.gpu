@@ -2,7 +2,8 @@ FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y \
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources && \
+    apt-get update && apt-get install -y \
     libgstreamer1.0-0 \
     gstreamer1.0-libav \
     gstreamer1.0-plugins-base \
@@ -21,8 +22,11 @@ COPY builddir/gst-plugin/libgstyolobatchdetection.so /usr/lib/x86_64-linux-gnu/g
 COPY builddir/gst-plugin/libgstyolojsonoverlay.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY builddir/gst-plugin/libgstyoloforward.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY builddir/gst-plugin/libgstyolobackend.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
-COPY libs/libonnxruntime_gpu.so.1.14.0 /usr/lib/libonnxruntime.so.1.14.0
-COPY libs/libonnxruntime_gpu.so /usr/lib/libonnxruntime.so
+COPY libs/libonnxruntime.so.1.14.0 /usr/lib/libonnxruntime.so.1.14.0
+COPY libs/libonnxruntime.so /usr/lib/libonnxruntime.so
+COPY libs/libonnxruntime_providers_shared.so /usr/lib/
+COPY libs/libonnxruntime_providers_cuda.so /usr/lib/
+COPY libs/libonnxruntime_providers_tensorrt.so /usr/lib/
 
 ENV GST_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 

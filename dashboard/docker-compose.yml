@@ -91,7 +91,7 @@ services:
       - mediamtx
 
   ai_detection_2:
-    image: gst-myfilter-opencv:latest
+    image: gst-myfilter-opencv-gpu:latest
     container_name: ai_detection_2
     depends_on:
       - sender_1
