@@ -31,7 +31,7 @@ services:
       - .:/app
     working_dir: /app
     command: >
-      gst-launch-1.0 filesrc location=test_video_3.mp4 !
+      gst-launch-1.0 filesrc location=test_video.mp4 !
       qtdemux !
       h264parse !
       avdec_h264 !
@@ -75,7 +75,7 @@ services:
       - .:/app
     working_dir: /app
     command: >
-      gst-launch-1.0 filesrc location=test_video_3.mp4 !
+      gst-launch-1.0 filesrc location=test_video.mp4 !
       qtdemux !
       h264parse !
       avdec_h264 !
@@ -91,7 +91,7 @@ services:
       - mediamtx
 
   ai_detection_2:
-    image: gst-myfilter-opencv-gpu:latest
+    image: huongcaohust/gst-myfilter-opencv-gpu:v1.2
     container_name: ai_detection_2
     depends_on:
       - sender_1
@@ -101,23 +101,27 @@ services:
     volumes:
       - ./yolo11n_dynamic.onnx:/app/yolo11n_dynamic.onnx
       - ./yolo11n_half.onnx:/app/yolo11n_half.onnx
+      - /tmp/gst:/tmp/gst
     environment:
       - GST_DEBUG=1
       - GST_DEBUG_DUMP_DOT_DIR=/tmp/gst
     ## ---- GPU: uncomment the 4 lines below to enable GPU ----
     # image: gst-myfilter-opencv-gpu:latest
-    # runtime: nvidia
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    cap_add:
+      - NET_ADMIN
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     ## ---- end GPU section ----
     command: >
       sh -c "
-      gst-launch-1.0
+      mkdir -p /tmp/gst &&
+      GST_DEBUG=3 gst-launch-1.0
       udpsrc port=5000 buffer-size=2097152 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
       rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
       videoscale ! video/x-raw,width=640,height=640 !
@@ -134,19 +138,22 @@ services:
       rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
       videoscale ! video/x-raw,width=640,height=640 !
       queue max-size-buffers=1 leaky=downstream ! batch.sink_3
-      yolobatchdetection name=batch model-path=/app/yolo11n_half.onnx conf-threshold=0.2 dest-host=ai-dashboard dest-port=5101 use-gpu=false !
+      yolobatchdetection name=batch model-path=/app/yolo11n_half.onnx conf-threshold=0.2 dest-host=ai-dashboard dest-port=5101 use-gpu=true gpu-device-id=0 !
       fakesink sync=false
       "
     networks:
       - video_net
 
   mediamtx:
-    image: bluenviron/mediamtx
+    image: bluenviron/mediamtx:latest
     container_name: mediamtx
     ports:
       - "8889:8889" # WebRTC
+      - "8189:8189/udp" # WebRTC ICE
       - "8888:8888" # HLS
       - "8554:8554" # RTSP
+    volumes:
+      - ./mediamtx.conf:/mediamtx.yml
     networks:
       - video_net
 
