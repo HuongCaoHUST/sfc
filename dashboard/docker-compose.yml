@@ -16,7 +16,7 @@ services:
       videoconvert !
       videorate ! video/x-raw,framerate=25/1 ! identity sync=true !
       tee name=t !
-      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam1
+      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://mediamtx:8554/cam1
       t. ! queue ! videorate ! video/x-raw,framerate=8/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 !
       udpsink host=ai_detection_2 port=5000 sync=false
     networks:
@@ -38,7 +38,7 @@ services:
       videoconvert !
       videorate ! video/x-raw,framerate=25/1 ! identity sync=true !
       tee name=t !
-      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam2
+      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://mediamtx:8554/cam2
       t. ! queue ! videorate ! video/x-raw,framerate=8/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 !
       udpsink host=ai_detection_2 port=5001 sync=false
     networks:
@@ -60,7 +60,7 @@ services:
       videoconvert !
       videorate ! video/x-raw,framerate=25/1 ! identity sync=true !
       tee name=t !
-      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam3
+      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://mediamtx:8554/cam3
       t. ! queue ! videorate ! video/x-raw,framerate=8/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 !
       udpsink host=ai_detection_2 port=5002 sync=false
     networks:
@@ -82,7 +82,7 @@ services:
       videoconvert !
       videorate ! video/x-raw,framerate=25/1 ! identity sync=true !
       tee name=t !
-      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://media_server:8554/cam4
+      queue ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=25 bitrate=2000 ! h264parse ! rtspclientsink location=rtsp://mediamtx:8554/cam4
       t. ! queue ! videorate ! video/x-raw,framerate=8/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! rtph264pay config-interval=1 !
       udpsink host=ai_detection_2 port=5003 sync=false
     networks:
@@ -142,20 +142,20 @@ services:
 
   mediamtx:
     image: bluenviron/mediamtx
-    container_name: media_server
+    container_name: mediamtx
     ports:
       - "8889:8889" # WebRTC
       - "8888:8888" # HLS
-      - "8554:8554" # RTSaP
+      - "8554:8554" # RTSP
     networks:
       - video_net
 
   ai-dashboard:
     build: .
-    container_name: ai_surveillance_dashboard
+    container_name: ai-dashboard
     ports:
       - "3000:3000"
-      - "5101:5101/udp"
+      - "5101:5101/udp"  # UDP for detection data from GStreamer
     environment:
       - NODE_ENV=production
     networks:

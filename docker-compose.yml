@@ -35,7 +35,7 @@ services:
 
   mediamtx:
     image: bluenviron/mediamtx
-    container_name: media_server
+    container_name: mediamtx
     ports:
       - "8889:8889" # WebRTC
       - "8888:8888" # HLS/MPEG-DASH
@@ -59,7 +59,7 @@ services:
       rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR ! 
       yolojsonoverlay udp-port=5002 ! 
       videoconvert ! x264enc tune=zerolatency bitrate=2000 ! h264parse ! 
-      rtspclientsink location=rtsp://media_server:8554/mystream
+      rtspclientsink location=rtsp://mediamtx:8554/mystream
     networks:
       - video_net
 

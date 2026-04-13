@@ -7,10 +7,10 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Shield, Settings, WifiOff } from 'lucide-react';
 
 const CAMERAS = [
-  { id: 'cam1', name: 'WEBCAM AI', url: 'http://127.0.0.1:8889/cam1' },
-  { id: 'cam2', name: 'Bãi đỗ xe (Parking Lot)', url: 'http://127.0.0.1:8889/cam2' },
-  { id: 'cam3', name: 'Hành lang tầng 1 (Hallway L1)', url: 'http://127.0.0.1:8889/cam3' },
-  { id: 'cam4', name: 'Kho hàng (Warehouse)', url: 'http://127.0.0.1:8889/cam4' },
+  { id: 'cam1', name: 'WEBCAM AI', url: `http://${window.location.hostname}:8889/cam1` },
+  { id: 'cam2', name: 'Bãi đỗ xe (Parking Lot)', url: `http://${window.location.hostname}:8889/cam2` },
+  { id: 'cam3', name: 'Hành lang tầng 1 (Hallway L1)', url: `http://${window.location.hostname}:8889/cam3` },
+  { id: 'cam4', name: 'Kho hàng (Warehouse)', url: `http://${window.location.hostname}:8889/cam4` },
 ];
 
 // Định nghĩa kiểu dữ liệu chính xác theo JSON bạn cung cấp
