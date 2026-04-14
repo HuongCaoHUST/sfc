@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  sender:
+    build: .
+    container_name: video_sender
+    devices:
+      - "/dev/video0:/dev/video0"
+    command: >
+      v4l2src device=/dev/video0 !
+      videoconvert !
+      x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 bitrate=2000 !
+      rtph264pay config-interval=1 !
+      tee name=t
+      t. ! queue ! udpsink host=flipper port=5000 sync=false
+      t. ! queue ! udpsink host=receiver port=5001 sync=false
+    networks:
+      - video_net
+
+  flipper:
+    # GPU-enabled image built from Dockerfile.gpu
+    build:
+      context: .
+      dockerfile: ./gst-template/Dockerfile.gpu
+    image: gst-yolo-gpu:latest
+    container_name: video_flipper_gpu
+    depends_on:
+      - sender
+    volumes:
+      - ./yolo11n.onnx:/app/yolo11n.onnx
+    # === GPU Configuration ===
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      # CUDA device to use (0 = first GPU / A4000)
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=0
+      # For debugging, set to 5 for production (0=off)
+      - GST_DEBUG=3
+    command: >
+      gst-launch-1.0
+      udpsrc port=5000 buffer-size=2097152 caps="application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96" !
+      rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR,width=640,height=640 !
+      yolobatchdetection model-path="/app/yolo11n.onnx" use-gpu=true gpu-device-id=0 conf-threshold=0.5 dest-host="receiver" dest-port=5002 !
+      fakesink sync=false
+    networks:
+      - video_net
+
+  mediamtx:
+    image: bluenviron/mediamtx
+    container_name: mediamtx
+    ports:
+      - "8889:8889" # WebRTC
+      - "8888:8888" # HLS/MPEG-DASH
+      - "8554:8554" # RTSP
+    networks:
+      - video_net
+
+  receiver:
+    build: .
+    image: gst-myfilter-opencv:latest
+    container_name: video_receiver
+    environment:
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    depends_on:
+      - flipper
+    command: >
+      gst-launch-1.0
+      udpsrc port=5001 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96\" !
+      rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
+      yolojsonoverlay udp-port=5002 !
+      videoconvert ! x264enc tune=zerolatency bitrate=2000 ! h264parse !
+      rtspclientsink location=rtsp://mediamtx:8554/mystream
+    networks:
+      - video_net
+
+networks:
+  video_net:
+    driver: bridge

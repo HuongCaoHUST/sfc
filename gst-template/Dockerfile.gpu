@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:12.6.3-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -14,6 +14,7 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu
     gstreamer1.0-rtsp \
     libgstrtspserver-1.0-dev \
     libopencv-dev \
+    libcudnn9-cuda-12 libcudnn9-dev-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY builddir/gst-plugin/libgstmyfilter.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
@@ -28,6 +29,16 @@ COPY libs/libonnxruntime_providers_shared.so /usr/lib/
 COPY libs/libonnxruntime_providers_cuda.so /usr/lib/
 COPY libs/libonnxruntime_providers_tensorrt.so /usr/lib/
 
+# === CRITICAL: Set library paths for CUDA and cuDNN ===
+ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH=/usr/lib:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:${LD_LIBRARY_PATH}
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+
+# === GStreamer Configuration ===
 ENV GST_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+
+# === ONNX Runtime GPU Optimization ===
+ENV ORT_CUDA_DEVICE_ORDINAL=0
+ENV ORT_CUDA_CUDNN_CONV_ALGO_SEARCH=DEFAULT
 
 CMD ["gst-inspect-1.0"]

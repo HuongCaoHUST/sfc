@@ -91,7 +91,7 @@ services:
       - mediamtx
 
   ai_detection_2:
-    image: huongcaohust/gst-myfilter-opencv-gpu:v1.2
+    image: huongcaohust/gst-myfilter-opencv-gpu:v1.3
     container_name: ai_detection_2
     depends_on:
       - sender_1
@@ -107,16 +107,16 @@ services:
       - GST_DEBUG_DUMP_DOT_DIR=/tmp/gst
     ## ---- GPU: uncomment the 4 lines below to enable GPU ----
     # image: gst-myfilter-opencv-gpu:latest
-    cap_add:
-      - NET_ADMIN
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # cap_add:
+    #   - NET_ADMIN
+    # runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     ## ---- end GPU section ----
     command: >
       sh -c "
@@ -138,7 +138,7 @@ services:
       rtph264depay ! avdec_h264 ! videoconvert ! video/x-raw,format=BGR !
       videoscale ! video/x-raw,width=640,height=640 !
       queue max-size-buffers=1 leaky=downstream ! batch.sink_3
-      yolobatchdetection name=batch model-path=/app/yolo11n_half.onnx conf-threshold=0.2 dest-host=ai-dashboard dest-port=5101 use-gpu=true gpu-device-id=0 !
+      yolobatchdetection name=batch model-path=/app/yolo11n_half.onnx conf-threshold=0.2 dest-host=ai-dashboard dest-port=5101 use-gpu=false !
       fakesink sync=false
       "
     networks:

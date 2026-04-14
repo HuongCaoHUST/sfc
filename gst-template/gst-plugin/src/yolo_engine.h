@@ -32,7 +32,10 @@ public:
 private:
     Ort::Env env;
     Ort::Session* session = nullptr;
-    
+
+    bool use_gpu = false;
+    int gpu_device_id = 0;
+
     std::vector<const char*> input_names_char;
     std::vector<const char*> output_names_char;
     std::vector<int64_t> input_shape;
