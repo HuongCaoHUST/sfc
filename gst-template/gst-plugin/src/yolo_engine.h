@@ -36,6 +36,8 @@ private:
     bool use_gpu = false;
     int gpu_device_id = 0;
 
+    std::vector<std::string> input_names_str;
+    std::vector<std::string> output_names_str;
     std::vector<const char*> input_names_char;
     std::vector<const char*> output_names_char;
     std::vector<int64_t> input_shape;

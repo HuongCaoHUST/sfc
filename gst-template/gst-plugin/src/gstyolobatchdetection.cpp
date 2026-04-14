@@ -28,6 +28,7 @@ enum {
   PROP_0,
   PROP_MODEL_PATH,
   PROP_CONF_THRESHOLD,
+  PROP_NMS_THRESHOLD,
   PROP_DEST_HOST,
   PROP_DEST_PORT,
   PROP_USE_GPU,
@@ -95,6 +96,12 @@ gst_yolobatchdetection_class_init (GstYoloBatchDetectionClass *klass)
           0.0f, 1.0f, 0.5f,
           (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property (gobject_class, PROP_NMS_THRESHOLD,
+      g_param_spec_float ("nms-threshold", "NMS Threshold",
+          "Threshold for Non-Maximum Suppression",
+          0.0f, 1.0f, 0.45f,
+          (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   g_object_class_install_property (gobject_class, PROP_DEST_HOST,
       g_param_spec_string ("dest-host", "Destination Host",
           "Destination IP or hostname for JSON UDP stream",
@@ -147,6 +154,7 @@ gst_yolobatchdetection_init (GstYoloBatchDetection *self)
 {
   self->model_path     = NULL;
   self->conf_threshold = 0.5f;
+  self->nms_threshold  = 0.45f;
   self->dest_host      = g_strdup ("127.0.0.1");
   self->dest_port      = 5101;
   self->use_gpu        = FALSE;
@@ -202,6 +210,9 @@ gst_yolobatchdetection_set_property (GObject *object, guint prop_id,
     case PROP_CONF_THRESHOLD:
       self->conf_threshold = g_value_get_float (value);
       break;
+    case PROP_NMS_THRESHOLD:
+      self->nms_threshold = g_value_get_float (value);
+      break;
     case PROP_DEST_HOST:
       g_free (self->dest_host);
       self->dest_host = g_value_dup_string (value);
@@ -234,6 +245,9 @@ gst_yolobatchdetection_get_property (GObject *object, guint prop_id,
       break;
     case PROP_CONF_THRESHOLD:
       g_value_set_float (value, self->conf_threshold);
+      break;
+    case PROP_NMS_THRESHOLD:
+      g_value_set_float (value, self->nms_threshold);
       break;
     case PROP_DEST_HOST:
       g_value_set_string (value, self->dest_host);
@@ -480,7 +494,7 @@ gst_yolobatchdetection_aggregate (GstAggregator *agg, gboolean timeout)
   std::vector<std::vector<Detection>> batch_results;
   try {
     batch_results = self->yolo_engine->detect_batch (
-        frames, self->conf_threshold);
+        frames, self->conf_threshold, self->nms_threshold);
   } catch (const std::exception &e) {
     GST_ERROR_OBJECT (self, "Batch inference failed: %s", e.what ());
     if (first_buf)

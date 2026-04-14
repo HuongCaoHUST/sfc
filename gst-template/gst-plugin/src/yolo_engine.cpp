@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <cstdlib>
+#include <opencv2/core/cuda.hpp>
 
 // Constructor: Loads the model and initializes the session.
 YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_device_id) : env(ORT_LOGGING_LEVEL_WARNING, "YOLO_Engine") {
@@ -20,10 +21,22 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_devi
 
         OrtCUDAProviderOptions cuda_opts = {};  // Proper initialization instead of memset
         cuda_opts.device_id = gpu_device_id;
+        cuda_opts.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
+        cuda_opts.arena_extend_strategy = 0;
+
+        // Lỗi 4: Missing CUDA context initialization
+        cv::cuda::setDevice(gpu_device_id);
 
         // Try to add CUDA provider
         try {
             session_options.AppendExecutionProvider_CUDA(cuda_opts);
+
+            // Lỗi 3: Không kiểm tra CUDA provider có được load thành công không
+            std::vector<std::string> available_providers = Ort::GetAvailableProviders();
+            auto cuda_it = std::find(available_providers.begin(), available_providers.end(), "CUDAExecutionProvider");
+            if (cuda_it == available_providers.end()) {
+                throw std::runtime_error("CUDA Execution Provider is not available in your ONNX Runtime build.");
+            }
         } catch (const std::exception& e) {
             throw std::runtime_error("Failed to add CUDA provider: " + std::string(e.what()));
         }
@@ -35,10 +48,14 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_devi
 
     // Get input and output names
     // Note: This assumes single input/output models.
+    // Lỗi 5: Fix memory leak (don't use strdup, use std::string vector)
     auto input_name = session->GetInputNameAllocated(0, allocator);
-    input_names_char.push_back(strdup(input_name.get()));
+    input_names_str.push_back(std::string(input_name.get()));
+    input_names_char.push_back(input_names_str.back().c_str());
+    
     auto output_name = session->GetOutputNameAllocated(0, allocator);
-    output_names_char.push_back(strdup(output_name.get()));
+    output_names_str.push_back(std::string(output_name.get()));
+    output_names_char.push_back(output_names_str.back().c_str());
     
     // Get input shape
     Ort::TypeInfo input_type_info = session->GetInputTypeInfo(0);
@@ -53,14 +70,10 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_devi
 
 // Destructor
 YoloEngine::~YoloEngine() {
-    for (auto p : input_names_char) {
-        free((void*)p);
-    }
     input_names_char.clear();
-    for (auto p : output_names_char) {
-        free((void*)p);
-    }
     output_names_char.clear();
+    input_names_str.clear();
+    output_names_str.clear();
 
     if (session) {
         delete session;
@@ -80,8 +93,10 @@ std::vector<float> YoloEngine::run_part1(cv::Mat& frame) {
 
     // Create input tensor
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    // Lỗi 2: Fix data lifetime issue with blob.ptr<float>() by buffering
+    std::vector<float> input_tensor_values(blob.ptr<float>(), blob.ptr<float>() + blob.total());
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, blob.ptr<float>(), blob.total(), input_shape.data(), input_shape.size());
+        memory_info, input_tensor_values.data(), input_tensor_values.size(), input_shape.data(), input_shape.size());
 
     // Get expected output shape from input info
     Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
@@ -260,8 +275,10 @@ std::vector<std::vector<Detection>> YoloEngine::detect_batch(
 
     // --- Inference ---
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    // Lỗi 2: Fix data lifetime issue with blob.ptr<float>() by buffering
+    std::vector<float> input_tensor_values(blob.ptr<float>(), blob.ptr<float>() + blob.total());
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, blob.ptr<float>(), blob.total(),
+        memory_info, input_tensor_values.data(), input_tensor_values.size(),
         batch_shape.data(), batch_shape.size());
 
     // Get expected output shape
@@ -378,8 +395,10 @@ std::vector<Detection> YoloEngine::detect(cv::Mat& frame, float conf_threshold, 
 
     // Create input tensor
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    // Lỗi 2: Fix data lifetime issue with blob.ptr<float>() by buffering
+    std::vector<float> input_tensor_values(blob.ptr<float>(), blob.ptr<float>() + blob.total());
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, blob.ptr<float>(), blob.total(), input_shape.data(), input_shape.size());
+        memory_info, input_tensor_values.data(), input_tensor_values.size(), input_shape.data(), input_shape.size());
 
     // Get expected output shape
     Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);

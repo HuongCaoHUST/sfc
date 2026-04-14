@@ -21,6 +21,7 @@ struct _GstYoloBatchDetection {
   /* Properties */
   gchar *model_path;
   gfloat conf_threshold;
+  gfloat nms_threshold;
   gchar *dest_host;
   gint dest_port;
   gboolean use_gpu;
