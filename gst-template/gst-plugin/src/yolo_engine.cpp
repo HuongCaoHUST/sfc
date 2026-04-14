@@ -18,8 +18,7 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_devi
                                    " (valid range: 0-15)");
         }
 
-        OrtCUDAProviderOptions cuda_opts;
-        memset(&cuda_opts, 0, sizeof(cuda_opts));
+        OrtCUDAProviderOptions cuda_opts = {};  // Proper initialization instead of memset
         cuda_opts.device_id = gpu_device_id;
 
         // Try to add CUDA provider
@@ -79,31 +78,49 @@ std::vector<float> YoloEngine::run_part1(cv::Mat& frame) {
     cv::Mat blob;
     cv::dnn::blobFromImage(frame, blob, 1.0 / 255.0, cv::Size((int)input_shape[3], (int)input_shape[2]), cv::Scalar(), true, false);
 
-    // Create input tensor with appropriate memory location
-    Ort::MemoryInfo memory_info = use_gpu
-        ? Ort::MemoryInfo::CreateCuda(OrtArenaAllocator, OrtMemTypeDefault, gpu_device_id)
-        : Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
+    // Create input tensor
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
         memory_info, blob.ptr<float>(), blob.total(), input_shape.data(), input_shape.size());
 
-    // Run inference
-    auto output_tensors = session->Run(
-        Ort::RunOptions{nullptr},
-        input_names_char.data(), &input_tensor, 1,
-        output_names_char.data(), 1
-    );
+    // Get expected output shape from input info
+    Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
+    auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
+    auto output_shape = output_tensor_info.GetShape();
 
-    // Get output
-    const float* raw_data = output_tensors[0].GetTensorData<float>();
-    if (!raw_data) {
-        throw std::runtime_error("Failed to get output tensor data - tensor may be on GPU without proper access");
+    // Calculate output size, handling dynamic dimensions
+    size_t output_size = 1;
+    for (int64_t dim : output_shape) {
+        if (dim > 0) {
+            output_size *= dim;
+        } else {
+            // If dynamic dimension, estimate based on YOLO structure
+            output_size = 1 * 84 * 8400;  // Single image YOLO output
+            break;
+        }
     }
 
-    auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
-    size_t output_size = std::accumulate(output_shape.begin(), output_shape.end(), 1, std::multiplies<int64_t>());
+    // Pre-allocate CPU output tensor
+    std::vector<float> cpu_output;
+    try {
+        cpu_output.resize(output_size);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to allocate part1 output: " + std::string(e.what()));
+    }
 
-    return std::vector<float>(raw_data, raw_data + output_size);
+    Ort::Value output_tensor = Ort::Value::CreateTensor<float>(
+        memory_info, cpu_output.data(), cpu_output.size(),
+        output_shape.data(), output_shape.size());
+
+    // Run inference with pre-allocated CPU output
+    session->Run(
+        Ort::RunOptions{nullptr},
+        input_names_char.data(), &input_tensor, 1,
+        output_names_char.data(), &output_tensor, 1
+    );
+
+    // Output is now safely in CPU memory
+    return cpu_output;
 }
 
 // Part 2: Run second stage and perform post-processing (NMS)
@@ -114,7 +131,7 @@ std::vector<Detection> YoloEngine::run_part2_and_postprocess(const float* tensor
         throw std::runtime_error("Session is not initialized.");
     }
 
-    // Wrap the input data in an Ort::Value without copying
+    // Get shape from model
     Ort::TypeInfo input_type_info = session->GetInputTypeInfo(0);
     auto input_tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
     auto part2_input_shape = input_tensor_info.GetShape();
@@ -126,37 +143,56 @@ std::vector<Detection> YoloEngine::run_part2_and_postprocess(const float* tensor
         part2_input_shape[2] = tensor_size / (part2_input_shape[0] * part2_input_shape[1]);
     }
 
-    // Create input tensor with appropriate memory location
-    Ort::MemoryInfo memory_info = use_gpu
-        ? Ort::MemoryInfo::CreateCuda(OrtArenaAllocator, OrtMemTypeDefault, gpu_device_id)
-        : Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    // Create CPU memory for input
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
+    // Note: tensor_data is const, but ONNX Runtime input expects non-const
+    // This is safe as we're just reading during inference
+    std::vector<float> input_copy(tensor_data, tensor_data + tensor_size);
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, const_cast<float*>(tensor_data), tensor_size, part2_input_shape.data(), part2_input_shape.size());
+        memory_info, input_copy.data(), input_copy.size(),
+        part2_input_shape.data(), part2_input_shape.size());
 
-    // Run inference for part 2
-    auto output_tensors = session->Run(
-        Ort::RunOptions{nullptr},
-        input_names_char.data(), &input_tensor, 1,
-        output_names_char.data(), 1);
+    // Get expected output shape
+    Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
+    auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
+    auto output_shape = output_tensor_info.GetShape();
 
-    // Post-processing
-    const float* raw_output = output_tensors[0].GetTensorData<float>();
-    if (!raw_output) {
-        throw std::runtime_error("Failed to get output tensor data");
+    // Calculate output size, handling dynamic dimensions
+    size_t output_size = 1;
+    for (int64_t dim : output_shape) {
+        if (dim > 0) {
+            output_size *= dim;
+        } else {
+            // If dynamic dimension, estimate
+            output_size = 1 * 84 * 8400;
+            break;
+        }
     }
 
-    auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
+    // Pre-allocate CPU output tensor
+    std::vector<float> cpu_output;
+    try {
+        cpu_output.resize(output_size);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to allocate part2 output: " + std::string(e.what()));
+    }
 
+    Ort::Value output_tensor = Ort::Value::CreateTensor<float>(
+        memory_info, cpu_output.data(), cpu_output.size(),
+        output_shape.data(), output_shape.size());
+
+    // Run inference with pre-allocated CPU output
+    session->Run(
+        Ort::RunOptions{nullptr},
+        input_names_char.data(), &input_tensor, 1,
+        output_names_char.data(), &output_tensor, 1);
+
+    // Post-processing with guaranteed CPU data
     int num_detections = static_cast<int>(output_shape[2]);
     int num_components = static_cast<int>(output_shape[1]);
 
-    // Copy GPU data to CPU if needed before using OpenCV
-    std::vector<float> cpu_data;
-    size_t total_floats = static_cast<size_t>(num_components) * num_detections;
-    cpu_data.assign(raw_output, raw_output + total_floats);
-
-    cv::Mat output_mat(num_components, num_detections, CV_32F, cpu_data.data());
+    cv::Mat output_mat(num_components, num_detections, CV_32F, cpu_output.data());
     output_mat = output_mat.t();
 
     std::vector<cv::Rect> boxes;
@@ -223,35 +259,61 @@ std::vector<std::vector<Detection>> YoloEngine::detect_batch(
     batch_shape[0] = static_cast<int64_t>(N);
 
     // --- Inference ---
-    Ort::MemoryInfo memory_info = use_gpu
-        ? Ort::MemoryInfo::CreateCuda(OrtArenaAllocator, OrtMemTypeDefault, gpu_device_id)
-        : Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
         memory_info, blob.ptr<float>(), blob.total(),
         batch_shape.data(), batch_shape.size());
 
-    auto output_tensors = session->Run(
-        Ort::RunOptions{nullptr},
-        input_names_char.data(), &input_tensor, 1,
-        output_names_char.data(), 1);
+    // Get expected output shape
+    Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
+    auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
+    auto output_shape = output_tensor_info.GetShape();
 
-    // --- Post-processing (per image) ---
-    const float* raw_output = output_tensors[0].GetTensorData<float>();
-    if (!raw_output) {
-        throw std::runtime_error("Failed to get batch output tensor data");
+    // Handle dynamic dimensions in output shape
+    // YOLO output is typically [batch_size, 84, 8400]
+    // If batch dimension is dynamic (-1), replace with actual N
+    std::vector<int64_t> batch_output_shape = output_shape;
+    if (batch_output_shape[0] <= 0) {
+        batch_output_shape[0] = N;  // Fix dynamic batch dimension
     }
 
-    auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
+    // Calculate output size, handling dynamic dimensions
+    // For YOLO: guaranteed to be [N, 84, 8400]
+    size_t output_size = 1;
+    for (int64_t dim : batch_output_shape) {
+        if (dim > 0) {
+            output_size *= dim;
+        } else {
+            // If still has negative dimension, estimate based on YOLO structure
+            // Assume 84 classes+coords, 8400 predictions per image
+            output_size = N * 84 * 8400;
+            break;
+        }
+    }
 
-    int num_components = static_cast<int>(output_shape[1]); // 84
-    int num_detections = static_cast<int>(output_shape[2]); // 8400
-    size_t per_image_floats = static_cast<size_t>(num_components) * num_detections;
-
-    // Copy all GPU data to CPU at once if needed
+    // Pre-allocate CPU output tensor - ONNX Runtime will copy GPU output here
     std::vector<float> cpu_output;
-    size_t total_floats = N * per_image_floats;
-    cpu_output.assign(raw_output, raw_output + total_floats);
+    try {
+        cpu_output.resize(output_size);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to allocate output buffer: " + std::string(e.what()) +
+                               " (size: " + std::to_string(output_size) + ")");
+    }
+
+    Ort::Value output_tensor = Ort::Value::CreateTensor<float>(
+        memory_info, cpu_output.data(), cpu_output.size(),
+        batch_output_shape.data(), batch_output_shape.size());
+
+    // Run batch inference with pre-allocated CPU output
+    session->Run(
+        Ort::RunOptions{nullptr},
+        input_names_char.data(), &input_tensor, 1,
+        output_names_char.data(), &output_tensor, 1);
+
+    // --- Post-processing (per image) with guaranteed CPU data ---
+    int num_components = static_cast<int>(batch_output_shape[1]);
+    int num_detections = static_cast<int>(batch_output_shape[2]);
+    size_t per_image_floats = static_cast<size_t>(num_components) * num_detections;
 
     std::vector<std::vector<Detection>> all_results(N);
 
@@ -314,39 +376,54 @@ std::vector<Detection> YoloEngine::detect(cv::Mat& frame, float conf_threshold, 
     cv::Mat blob;
     cv::dnn::blobFromImage(frame, blob, 1.0 / 255.0, cv::Size((int)input_shape[3], (int)input_shape[2]), cv::Scalar(), true, false);
 
-    // Use appropriate memory allocation
-    Ort::MemoryInfo memory_info = use_gpu
-        ? Ort::MemoryInfo::CreateCuda(OrtArenaAllocator, OrtMemTypeDefault, gpu_device_id)
-        : Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
+    // Create input tensor
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
         memory_info, blob.ptr<float>(), blob.total(), input_shape.data(), input_shape.size());
 
-    // --- Inference ---
-    auto output_tensors = session->Run(
-        Ort::RunOptions{nullptr},
-        input_names_char.data(), &input_tensor, 1,
-        output_names_char.data(), 1
-    );
+    // Get expected output shape
+    Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
+    auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
+    auto output_shape = output_tensor_info.GetShape();
 
-    // --- Post-processing ---
-    std::vector<Detection> results;
-    const float* raw_output = output_tensors[0].GetTensorData<float>();
-    if (!raw_output) {
-        throw std::runtime_error("Failed to get single-shot output tensor data");
+    // Calculate output size, handling dynamic dimensions
+    size_t output_size = 1;
+    for (int64_t dim : output_shape) {
+        if (dim > 0) {
+            output_size *= dim;
+        } else {
+            // If dynamic dimension, estimate
+            output_size = 1 * 84 * 8400;
+            break;
+        }
     }
 
-    auto output_shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
+    // Pre-allocate CPU output tensor
+    std::vector<float> cpu_output;
+    try {
+        cpu_output.resize(output_size);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to allocate detect output: " + std::string(e.what()));
+    }
+
+    Ort::Value output_tensor = Ort::Value::CreateTensor<float>(
+        memory_info, cpu_output.data(), cpu_output.size(),
+        output_shape.data(), output_shape.size());
+
+    // --- Inference with pre-allocated CPU output ---
+    session->Run(
+        Ort::RunOptions{nullptr},
+        input_names_char.data(), &input_tensor, 1,
+        output_names_char.data(), &output_tensor, 1
+    );
+
+    // --- Post-processing with guaranteed CPU data ---
+    std::vector<Detection> results;
 
     int num_detections = static_cast<int>(output_shape[2]);
     int num_components = static_cast<int>(output_shape[1]);
 
-    // Copy GPU data to CPU if needed before using OpenCV
-    std::vector<float> cpu_data;
-    size_t total_floats = static_cast<size_t>(num_components) * num_detections;
-    cpu_data.assign(raw_output, raw_output + total_floats);
-
-    cv::Mat output_mat(num_components, num_detections, CV_32F, cpu_data.data());
+    cv::Mat output_mat(num_components, num_detections, CV_32F, cpu_output.data());
     output_mat = output_mat.t();
 
     std::vector<cv::Rect> boxes;

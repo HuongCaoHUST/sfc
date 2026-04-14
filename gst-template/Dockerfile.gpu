@@ -16,6 +16,8 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu
     libopencv-dev \
     libcudnn9-cuda-12 libcudnn9-dev-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
+RUN ln -s /usr/local/cuda/lib64/libcudart.so.12 /usr/lib/libcudart.so.12 || true && \
+    ln -s /usr/local/cuda/lib64/libcuda.so /usr/lib/libcuda.so || true
 
 COPY builddir/gst-plugin/libgstmyfilter.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 COPY builddir/gst-plugin/libgstyolodetection.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
@@ -30,6 +32,7 @@ COPY libs/libonnxruntime_providers_cuda.so /usr/lib/
 COPY libs/libonnxruntime_providers_tensorrt.so /usr/lib/
 
 # === CRITICAL: Set library paths for CUDA and cuDNN ===
+# Note: LD_PRELOAD should NOT be used - ONNX Runtime loads CUDA provider automatically
 ENV CUDA_HOME=/usr/local/cuda
 ENV LD_LIBRARY_PATH=/usr/lib:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:${LD_LIBRARY_PATH}
 ENV PATH=${CUDA_HOME}/bin:${PATH}
