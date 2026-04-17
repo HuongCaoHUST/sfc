@@ -1,13 +1,14 @@
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.6.3-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Cài đặt công cụ nền tảng và các gói phát triển GStreamer + OpenCV
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
+# Update repository lists for Ubuntu 24.04 & Install required tools, OpenCV and GStreamer
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources && \
+    apt-get update && apt-get install -y \
     wget \
     curl \
+    cmake \
+    build-essential \
     pkg-config \
     libgstreamer1.0-0 \
     gstreamer1.0-libav \
@@ -19,11 +20,16 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-rtsp \
     libgstrtspserver-1.0-dev \
     libopencv-dev \
+    libcudnn9-cuda-12 libcudnn9-dev-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
 
-# Tải và cấu hình ONNX Runtime GPU (v1.18.1) tương tự như Dockerfile của app main.cpp
+RUN ln -s /usr/local/cuda/lib64/libcudart.so.12 /usr/lib/libcudart.so.12 || true && \
+    ln -s /usr/local/cuda/lib64/libcuda.so /usr/lib/libcuda.so || true
+
+# Tải và cài đặt ONNX Runtime GPU 1.18.1
 ENV ORT_VERSION=1.18.1
 ENV ORT_DIR=/opt/onnxruntime
+# Kể từ phiên bản 1.18, package default của ONNXRuntime đã chuyển sang dùng CUDA 12 thay vì CUDA 11.
 RUN wget -qO ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz && \
     tar -xzf ort.tgz && \
     mv onnxruntime-linux-x64-gpu-${ORT_VERSION} ${ORT_DIR} && \
@@ -34,18 +40,15 @@ ENV ORT_ROOT=${ORT_DIR}
 ENV LD_LIBRARY_PATH=${ORT_DIR}/lib:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:${LD_LIBRARY_PATH}
 ENV PATH=/usr/local/cuda/bin:${PATH}
 
-# GStreamer Configuration
-ENV GST_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+# Copy các file thư viện GStreamer do bạn build (vẫn sử dụng gốc Ubuntu 24.04 để khớp mã compiled glibc)
+COPY builddir/gst-plugin/libgstmyfilter.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+COPY builddir/gst-plugin/libgstyolodetection.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+COPY builddir/gst-plugin/libgstyolobatchdetection.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+COPY builddir/gst-plugin/libgstyolojsonoverlay.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+COPY builddir/gst-plugin/libgstyoloforward.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
+COPY builddir/gst-plugin/libgstyolobackend.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 
-# Copy các plugin GStreamer đã compiled
-# LƯU Ý QUAN TRỌNG: Nếu gặp lỗi GLIBC khi tải plugin do chênh lệch hệ điều hành (Host Ubuntu 24.04 vs Docker Ubuntu 22.04) 
-# Bạn hãy re-build file C++ của gst-plugin TRONG môi trường của container Ubuntu 22.04 này (hoặc container onnx_detection_gpu của bạn) để đồng bộ thư viện C.
-COPY builddir/gst-plugin/libgstmyfilter.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/ || true
-COPY builddir/gst-plugin/libgstyolodetection.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/ || true
-COPY builddir/gst-plugin/libgstyolobatchdetection.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/ || true
-COPY builddir/gst-plugin/libgstyolojsonoverlay.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/ || true
-COPY builddir/gst-plugin/libgstyoloforward.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/ || true
-COPY builddir/gst-plugin/libgstyolobackend.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/ || true
+ENV GST_PLUGIN_PATH=/usr/lib/x86_64-linux-gnu/gstreamer-1.0/
 
 # ONNX Runtime GPU Optimization Config
 ENV ORT_CUDA_DEVICE_ORDINAL=0
