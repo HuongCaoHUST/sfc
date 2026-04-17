@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <cstdlib>
-#include <opencv2/core/cuda.hpp>
+#include <opencv2/opencv.hpp>
 
 // Constructor: Loads the model and initializes the session.
 YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_device_id) : env(ORT_LOGGING_LEVEL_WARNING, "YOLO_Engine") {
@@ -19,19 +19,17 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_devi
                                    " (valid range: 0-15)");
         }
 
-        OrtCUDAProviderOptions cuda_opts = {};  // Proper initialization instead of memset
+        OrtCUDAProviderOptions cuda_opts;
         cuda_opts.device_id = gpu_device_id;
         cuda_opts.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive;
         cuda_opts.arena_extend_strategy = 0;
 
-        // Lỗi 4: Missing CUDA context initialization
-        cv::cuda::setDevice(gpu_device_id);
+        // Removed cv::cuda::setDevice(gpu_device_id); to avoid OpenCV CUDA dependencies.
+        // ONNXRuntime execution providers handle CUDA context natively.
 
-        // Try to add CUDA provider
         try {
             session_options.AppendExecutionProvider_CUDA(cuda_opts);
 
-            // Lỗi 3: Không kiểm tra CUDA provider có được load thành công không
             std::vector<std::string> available_providers = Ort::GetAvailableProviders();
             auto cuda_it = std::find(available_providers.begin(), available_providers.end(), "CUDAExecutionProvider");
             if (cuda_it == available_providers.end()) {
@@ -46,9 +44,6 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_devi
     
     Ort::AllocatorWithDefaultOptions allocator;
 
-    // Get input and output names
-    // Note: This assumes single input/output models.
-    // Lỗi 5: Fix memory leak (don't use strdup, use std::string vector)
     auto input_name = session->GetInputNameAllocated(0, allocator);
     input_names_str.push_back(std::string(input_name.get()));
     input_names_char.push_back(input_names_str.back().c_str());
@@ -64,8 +59,10 @@ YoloEngine::YoloEngine(const std::string& model_path, bool use_gpu, int gpu_devi
     
     // Allow for dynamic batch and spatial sizes
     if (input_shape[0] < 1) input_shape[0] = 1; 
-    if (input_shape[2] < 1) input_shape[2] = 640;
-    if (input_shape[3] < 1) input_shape[3] = 640;
+    if (input_shape.size() >= 4) {
+        if (input_shape[2] < 1) input_shape[2] = 640;
+        if (input_shape[3] < 1) input_shape[3] = 640;
+    }
 }
 
 // Destructor
@@ -87,66 +84,49 @@ std::vector<float> YoloEngine::run_part1(cv::Mat& frame) {
         throw std::runtime_error("Session is not initialized.");
     }
 
-    // Pre-processing
-    cv::Mat blob;
-    cv::dnn::blobFromImage(frame, blob, 1.0 / 255.0, cv::Size((int)input_shape[3], (int)input_shape[2]), cv::Scalar(), true, false);
+    int input_h = (int)input_shape[2];
+    int input_w = (int)input_shape[3];
 
-    // Create input tensor
+    // Pre-processing
+    cv::Mat resized_frame, rgb_frame, float_frame;
+    cv::resize(frame, resized_frame, cv::Size(input_w, input_h));
+    cv::cvtColor(resized_frame, rgb_frame, cv::COLOR_BGR2RGB);
+    rgb_frame.convertTo(float_frame, CV_32F, 1.0f / 255.0f);
+
+    std::vector<cv::Mat> chw;
+    cv::split(float_frame, chw);
+
+    std::vector<float> input_tensor_values;
+    input_tensor_values.reserve(3 * input_w * input_h);
+    for (int i = 0; i < 3; ++i) {
+        input_tensor_values.insert(input_tensor_values.end(), (float*)chw[i].datastart, (float*)chw[i].dataend);
+    }
+
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    // Lỗi 2: Fix data lifetime issue with blob.ptr<float>() by buffering
-    std::vector<float> input_tensor_values(blob.ptr<float>(), blob.ptr<float>() + blob.total());
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
         memory_info, input_tensor_values.data(), input_tensor_values.size(), input_shape.data(), input_shape.size());
 
-    // Get expected output shape from input info
-    Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
-    auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
-    auto output_shape = output_tensor_info.GetShape();
-
-    // Calculate output size, handling dynamic dimensions
-    size_t output_size = 1;
-    for (int64_t dim : output_shape) {
-        if (dim > 0) {
-            output_size *= dim;
-        } else {
-            // If dynamic dimension, estimate based on YOLO structure
-            output_size = 1 * 84 * 8400;  // Single image YOLO output
-            break;
-        }
-    }
-
-    // Pre-allocate CPU output tensor
-    std::vector<float> cpu_output;
-    try {
-        cpu_output.resize(output_size);
-    } catch (const std::exception& e) {
-        throw std::runtime_error("Failed to allocate part1 output: " + std::string(e.what()));
-    }
-
-    Ort::Value output_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, cpu_output.data(), cpu_output.size(),
-        output_shape.data(), output_shape.size());
-
-    // Run inference with pre-allocated CPU output
-    session->Run(
-        Ort::RunOptions{nullptr},
+    // Run inference and let ONNXRuntime allocate the output
+    auto output_tensors = session->Run(Ort::RunOptions{nullptr},
         input_names_char.data(), &input_tensor, 1,
-        output_names_char.data(), &output_tensor, 1
-    );
+        output_names_char.data(), 1);
 
-    // Output is now safely in CPU memory
-    return cpu_output;
+    auto& output_tensor = output_tensors[0];
+    float* out_data = output_tensor.GetTensorMutableData<float>();
+    size_t out_size = output_tensor.GetTensorTypeAndShapeInfo().GetElementCount();
+
+    // Copy to persistent float vector buffer
+    return std::vector<float>(out_data, out_data + out_size);
 }
 
 // Part 2: Run second stage and perform post-processing (NMS)
 std::vector<Detection> YoloEngine::run_part2_and_postprocess(const float* tensor_data, size_t tensor_size,
     int frame_width, int frame_height, float conf_threshold, float nms_threshold) {
-    std::vector<Detection> results;
+    
     if (!session) {
         throw std::runtime_error("Session is not initialized.");
     }
 
-    // Get shape from model
     Ort::TypeInfo input_type_info = session->GetInputTypeInfo(0);
     auto input_tensor_info = input_type_info.GetTensorTypeAndShapeInfo();
     auto part2_input_shape = input_tensor_info.GetShape();
@@ -158,58 +138,24 @@ std::vector<Detection> YoloEngine::run_part2_and_postprocess(const float* tensor
         part2_input_shape[2] = tensor_size / (part2_input_shape[0] * part2_input_shape[1]);
     }
 
-    // Create CPU memory for input
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
-    // Note: tensor_data is const, but ONNX Runtime input expects non-const
-    // This is safe as we're just reading during inference
     std::vector<float> input_copy(tensor_data, tensor_data + tensor_size);
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
         memory_info, input_copy.data(), input_copy.size(),
         part2_input_shape.data(), part2_input_shape.size());
 
-    // Get expected output shape
-    Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
-    auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
-    auto output_shape = output_tensor_info.GetShape();
-
-    // Calculate output size, handling dynamic dimensions
-    size_t output_size = 1;
-    for (int64_t dim : output_shape) {
-        if (dim > 0) {
-            output_size *= dim;
-        } else {
-            // If dynamic dimension, estimate
-            output_size = 1 * 84 * 8400;
-            break;
-        }
-    }
-
-    // Pre-allocate CPU output tensor
-    std::vector<float> cpu_output;
-    try {
-        cpu_output.resize(output_size);
-    } catch (const std::exception& e) {
-        throw std::runtime_error("Failed to allocate part2 output: " + std::string(e.what()));
-    }
-
-    Ort::Value output_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, cpu_output.data(), cpu_output.size(),
-        output_shape.data(), output_shape.size());
-
-    // Run inference with pre-allocated CPU output
-    session->Run(
-        Ort::RunOptions{nullptr},
+    auto output_tensors = session->Run(Ort::RunOptions{nullptr},
         input_names_char.data(), &input_tensor, 1,
-        output_names_char.data(), &output_tensor, 1);
+        output_names_char.data(), 1);
 
-    // Post-processing with guaranteed CPU data
-    int num_detections = static_cast<int>(output_shape[2]);
+    auto& output_tensor = output_tensors[0];
+    auto output_shape = output_tensor.GetTensorTypeAndShapeInfo().GetShape();
+    float* output_data = output_tensor.GetTensorMutableData<float>();
+
     int num_components = static_cast<int>(output_shape[1]);
+    int num_detections = static_cast<int>(output_shape[2]);
 
-    cv::Mat output_mat(num_components, num_detections, CV_32F, cpu_output.data());
-    output_mat = output_mat.t();
-
+    std::vector<Detection> results;
     std::vector<cv::Rect> boxes;
     std::vector<float> confidences;
     std::vector<int> class_ids;
@@ -218,28 +164,32 @@ std::vector<Detection> YoloEngine::run_part2_and_postprocess(const float* tensor
     float scale_x = (float)frame_width / MODEL_BASE_SIZE;
     float scale_y = (float)frame_height / MODEL_BASE_SIZE;
 
-    for (int i = 0; i < output_mat.rows; i++) {
-        float* row = output_mat.ptr<float>(i);
-        cv::Mat scores(1, num_components - 4, CV_32F, row + 4);
-        cv::Point class_id_point;
-        double max_score;
-        cv::minMaxLoc(scores, nullptr, &max_score, nullptr, &class_id_point);
+    for (int i = 0; i < num_detections; ++i) {
+        float max_conf = 0.0f;
+        int best_class_id = -1;
 
-        if (max_score >= conf_threshold) {
-            confidences.push_back(static_cast<float>(max_score));
-            class_ids.push_back(class_id_point.x);
+        for (int c = 4; c < num_components; ++c) {
+            float conf = output_data[c * num_detections + i];
+            if (conf > max_conf) {
+                max_conf = conf;
+                best_class_id = c - 4;
+            }
+        }
 
-            float cx = row[0];
-            float cy = row[1];
-            float w = row[2];
-            float h = row[3];
+        if (max_conf >= conf_threshold) {
+            float cx = output_data[0 * num_detections + i];
+            float cy = output_data[1 * num_detections + i];
+            float w = output_data[2 * num_detections + i];
+            float h = output_data[3 * num_detections + i];
 
-            int left = static_cast<int>((cx - 0.5 * w) * scale_x);
-            int top = static_cast<int>((cy - 0.5 * h) * scale_y);
+            int left = static_cast<int>((cx - 0.5f * w) * scale_x);
+            int top = static_cast<int>((cy - 0.5f * h) * scale_y);
             int width = static_cast<int>(w * scale_x);
             int height = static_cast<int>(h * scale_y);
 
             boxes.push_back(cv::Rect(left, top, width, height));
+            confidences.push_back(max_conf);
+            class_ids.push_back(best_class_id);
         }
     }
 
@@ -262,72 +212,46 @@ std::vector<std::vector<Detection>> YoloEngine::detect_batch(
     }
 
     int N = static_cast<int>(frames.size());
+    int input_h = (int)input_shape[2];
+    int input_w = (int)input_shape[3];
 
     // --- Pre-processing (batch) ---
-    cv::Mat blob;
-    cv::dnn::blobFromImages(frames, blob, 1.0 / 255.0,
-        cv::Size((int)input_shape[3], (int)input_shape[2]),
-        cv::Scalar(), true, false);
+    std::vector<float> input_tensor_values;
+    input_tensor_values.reserve(N * 3 * input_h * input_w);
 
-    // Local copy of shape with batch dimension set to N
+    for (int n = 0; n < N; ++n) {
+        cv::Mat resized_frame, rgb_frame, float_frame;
+        cv::resize(frames[n], resized_frame, cv::Size(input_w, input_h));
+        cv::cvtColor(resized_frame, rgb_frame, cv::COLOR_BGR2RGB);
+        rgb_frame.convertTo(float_frame, CV_32F, 1.0f / 255.0f);
+
+        std::vector<cv::Mat> chw;
+        cv::split(float_frame, chw);
+        for (int i = 0; i < 3; ++i) {
+            input_tensor_values.insert(input_tensor_values.end(), 
+                (float*)chw[i].datastart, (float*)chw[i].dataend);
+        }
+    }
+
     std::vector<int64_t> batch_shape = input_shape;
     batch_shape[0] = static_cast<int64_t>(N);
 
-    // --- Inference ---
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    // Lỗi 2: Fix data lifetime issue with blob.ptr<float>() by buffering
-    std::vector<float> input_tensor_values(blob.ptr<float>(), blob.ptr<float>() + blob.total());
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
         memory_info, input_tensor_values.data(), input_tensor_values.size(),
         batch_shape.data(), batch_shape.size());
 
-    // Get expected output shape
-    Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
-    auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
-    auto output_shape = output_tensor_info.GetShape();
+    // --- Inference ---
+    auto output_tensors = session->Run(Ort::RunOptions{nullptr}, 
+        input_names_char.data(), &input_tensor, 1, 
+        output_names_char.data(), 1);
 
-    // Handle dynamic dimensions in output shape
-    // YOLO output is typically [batch_size, 84, 8400]
-    // If batch dimension is dynamic (-1), replace with actual N
-    std::vector<int64_t> batch_output_shape = output_shape;
-    if (batch_output_shape[0] <= 0) {
-        batch_output_shape[0] = N;  // Fix dynamic batch dimension
-    }
+    Ort::Value& output_tensor = output_tensors[0];
+    auto output_tensor_info = output_tensor.GetTensorTypeAndShapeInfo();
+    auto batch_output_shape = output_tensor_info.GetShape();
+    float* output_data_ptr = output_tensor.GetTensorMutableData<float>();
 
-    // Calculate output size, handling dynamic dimensions
-    // For YOLO: guaranteed to be [N, 84, 8400]
-    size_t output_size = 1;
-    for (int64_t dim : batch_output_shape) {
-        if (dim > 0) {
-            output_size *= dim;
-        } else {
-            // If still has negative dimension, estimate based on YOLO structure
-            // Assume 84 classes+coords, 8400 predictions per image
-            output_size = N * 84 * 8400;
-            break;
-        }
-    }
-
-    // Pre-allocate CPU output tensor - ONNX Runtime will copy GPU output here
-    std::vector<float> cpu_output;
-    try {
-        cpu_output.resize(output_size);
-    } catch (const std::exception& e) {
-        throw std::runtime_error("Failed to allocate output buffer: " + std::string(e.what()) +
-                               " (size: " + std::to_string(output_size) + ")");
-    }
-
-    Ort::Value output_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, cpu_output.data(), cpu_output.size(),
-        batch_output_shape.data(), batch_output_shape.size());
-
-    // Run batch inference with pre-allocated CPU output
-    session->Run(
-        Ort::RunOptions{nullptr},
-        input_names_char.data(), &input_tensor, 1,
-        output_names_char.data(), &output_tensor, 1);
-
-    // --- Post-processing (per image) with guaranteed CPU data ---
+    // --- Post-processing ---
     int num_components = static_cast<int>(batch_output_shape[1]);
     int num_detections = static_cast<int>(batch_output_shape[2]);
     size_t per_image_floats = static_cast<size_t>(num_components) * num_detections;
@@ -335,40 +259,41 @@ std::vector<std::vector<Detection>> YoloEngine::detect_batch(
     std::vector<std::vector<Detection>> all_results(N);
 
     for (int img = 0; img < N; img++) {
-        float* img_data = cpu_output.data() + img * per_image_floats;
-
-        cv::Mat output_mat(num_components, num_detections, CV_32F, img_data);
-        output_mat = output_mat.t();
-
-        float scale_x = (float)frames[img].cols / input_shape[3];
-        float scale_y = (float)frames[img].rows / input_shape[2];
+        float* img_data = output_data_ptr + img * per_image_floats;
+        
+        float scale_x = (float)frames[img].cols / input_w;
+        float scale_y = (float)frames[img].rows / input_h;
 
         std::vector<cv::Rect> boxes;
         std::vector<float> confidences;
         std::vector<int> class_ids;
 
-        for (int i = 0; i < output_mat.rows; i++) {
-            float* row = output_mat.ptr<float>(i);
-            cv::Mat scores(1, num_components - 4, CV_32F, row + 4);
-            cv::Point class_id_point;
-            double max_score;
-            cv::minMaxLoc(scores, nullptr, &max_score, nullptr, &class_id_point);
+        for (int i = 0; i < num_detections; ++i) {
+            float max_conf = 0.0f;
+            int best_class_id = -1;
 
-            if (max_score >= conf_threshold) {
-                confidences.push_back(static_cast<float>(max_score));
-                class_ids.push_back(class_id_point.x);
+            for (int c = 4; c < num_components; ++c) {
+                float conf = img_data[c * num_detections + i];
+                if (conf > max_conf) {
+                    max_conf = conf;
+                    best_class_id = c - 4;
+                }
+            }
 
-                float cx = row[0];
-                float cy = row[1];
-                float w = row[2];
-                float h = row[3];
+            if (max_conf >= conf_threshold) {
+                float cx = img_data[0 * num_detections + i];
+                float cy = img_data[1 * num_detections + i];
+                float w = img_data[2 * num_detections + i];
+                float h = img_data[3 * num_detections + i];
 
-                int left = static_cast<int>((cx - 0.5 * w) * scale_x);
-                int top = static_cast<int>((cy - 0.5 * h) * scale_y);
+                int left = static_cast<int>((cx - 0.5f * w) * scale_x);
+                int top = static_cast<int>((cy - 0.5f * h) * scale_y);
                 int width = static_cast<int>(w * scale_x);
                 int height = static_cast<int>(h * scale_y);
 
                 boxes.push_back(cv::Rect(left, top, width, height));
+                confidences.push_back(max_conf);
+                class_ids.push_back(best_class_id);
             }
         }
 
@@ -389,91 +314,77 @@ std::vector<Detection> YoloEngine::detect(cv::Mat& frame, float conf_threshold, 
         throw std::runtime_error("Session is not initialized for single-shot detection.");
     }
 
-    // --- Pre-processing ---
-    cv::Mat blob;
-    cv::dnn::blobFromImage(frame, blob, 1.0 / 255.0, cv::Size((int)input_shape[3], (int)input_shape[2]), cv::Scalar(), true, false);
+    int input_h = (int)input_shape[2];
+    int input_w = (int)input_shape[3];
 
-    // Create input tensor
+    // --- Pre-processing ---
+    cv::Mat resized_frame, rgb_frame, float_frame;
+    cv::resize(frame, resized_frame, cv::Size(input_w, input_h));
+    cv::cvtColor(resized_frame, rgb_frame, cv::COLOR_BGR2RGB);
+    rgb_frame.convertTo(float_frame, CV_32F, 1.0f / 255.0f);
+
+    std::vector<cv::Mat> chw;
+    cv::split(float_frame, chw);
+
+    std::vector<float> input_tensor_values;
+    input_tensor_values.reserve(3 * input_h * input_w);
+    for (int i = 0; i < 3; ++i) {
+        input_tensor_values.insert(input_tensor_values.end(), (float*)chw[i].datastart, (float*)chw[i].dataend);
+    }
+
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    // Lỗi 2: Fix data lifetime issue with blob.ptr<float>() by buffering
-    std::vector<float> input_tensor_values(blob.ptr<float>(), blob.ptr<float>() + blob.total());
     Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
         memory_info, input_tensor_values.data(), input_tensor_values.size(), input_shape.data(), input_shape.size());
 
-    // Get expected output shape
-    Ort::TypeInfo output_type_info = session->GetOutputTypeInfo(0);
-    auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
+    // --- Inference ---
+    auto output_tensors = session->Run(Ort::RunOptions{nullptr}, 
+        input_names_char.data(), &input_tensor, 1, 
+        output_names_char.data(), 1);
+
+    Ort::Value& output_tensor = output_tensors[0];
+    auto output_tensor_info = output_tensor.GetTensorTypeAndShapeInfo();
     auto output_shape = output_tensor_info.GetShape();
+    float* output_data = output_tensor.GetTensorMutableData<float>();
 
-    // Calculate output size, handling dynamic dimensions
-    size_t output_size = 1;
-    for (int64_t dim : output_shape) {
-        if (dim > 0) {
-            output_size *= dim;
-        } else {
-            // If dynamic dimension, estimate
-            output_size = 1 * 84 * 8400;
-            break;
-        }
-    }
-
-    // Pre-allocate CPU output tensor
-    std::vector<float> cpu_output;
-    try {
-        cpu_output.resize(output_size);
-    } catch (const std::exception& e) {
-        throw std::runtime_error("Failed to allocate detect output: " + std::string(e.what()));
-    }
-
-    Ort::Value output_tensor = Ort::Value::CreateTensor<float>(
-        memory_info, cpu_output.data(), cpu_output.size(),
-        output_shape.data(), output_shape.size());
-
-    // --- Inference with pre-allocated CPU output ---
-    session->Run(
-        Ort::RunOptions{nullptr},
-        input_names_char.data(), &input_tensor, 1,
-        output_names_char.data(), &output_tensor, 1
-    );
-
-    // --- Post-processing with guaranteed CPU data ---
+    // --- Post-processing ---
     std::vector<Detection> results;
 
-    int num_detections = static_cast<int>(output_shape[2]);
     int num_components = static_cast<int>(output_shape[1]);
-
-    cv::Mat output_mat(num_components, num_detections, CV_32F, cpu_output.data());
-    output_mat = output_mat.t();
+    int num_detections = static_cast<int>(output_shape[2]);
 
     std::vector<cv::Rect> boxes;
     std::vector<float> confidences;
     std::vector<int> class_ids;
 
-    float scale_x = (float)frame.cols / input_shape[3];
-    float scale_y = (float)frame.rows / input_shape[2];
+    float scale_x = (float)frame.cols / input_w;
+    float scale_y = (float)frame.rows / input_h;
 
-    for (int i = 0; i < output_mat.rows; i++) {
-        float* row = output_mat.ptr<float>(i);
-        cv::Mat scores(1, num_components - 4, CV_32F, row + 4);
-        cv::Point class_id_point;
-        double max_score;
-        cv::minMaxLoc(scores, nullptr, &max_score, nullptr, &class_id_point);
+    for (int i = 0; i < num_detections; ++i) {
+        float max_conf = 0.0f;
+        int best_class_id = -1;
 
-        if (max_score >= conf_threshold) {
-            confidences.push_back(static_cast<float>(max_score));
-            class_ids.push_back(class_id_point.x);
+        for (int c = 4; c < num_components; ++c) {
+            float conf = output_data[c * num_detections + i];
+            if (conf > max_conf) {
+                max_conf = conf;
+                best_class_id = c - 4;
+            }
+        }
 
-            float cx = row[0];
-            float cy = row[1];
-            float w = row[2];
-            float h = row[3];
+        if (max_conf >= conf_threshold) {
+            float cx = output_data[0 * num_detections + i];
+            float cy = output_data[1 * num_detections + i];
+            float w = output_data[2 * num_detections + i];
+            float h = output_data[3 * num_detections + i];
 
-            int left = static_cast<int>((cx - 0.5 * w) * scale_x);
-            int top = static_cast<int>((cy - 0.5 * h) * scale_y);
+            int left = static_cast<int>((cx - 0.5f * w) * scale_x);
+            int top = static_cast<int>((cy - 0.5f * h) * scale_y);
             int width = static_cast<int>(w * scale_x);
             int height = static_cast<int>(h * scale_y);
 
             boxes.push_back(cv::Rect(left, top, width, height));
+            confidences.push_back(max_conf);
+            class_ids.push_back(best_class_id);
         }
     }
 
