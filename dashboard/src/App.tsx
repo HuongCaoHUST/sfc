@@ -9,7 +9,9 @@ import { MoreVertical } from 'lucide-react';
 export default function App() {
   const [cameras, setCameras] = useState(() => {
     const saved = localStorage.getItem('camera_settings');
-    return saved ? JSON.parse(saved) : INITIAL_CAMERAS;
+    const initial = saved ? JSON.parse(saved) : INITIAL_CAMERAS;
+    // Đảm bảo mỗi cam có thuộc tính aiEnabled (mặc định là true)
+    return initial.map((c: any) => ({ ...c, aiEnabled: c.aiEnabled ?? true }));
   });
   const [maximizedCam, setMaximizedCam] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -34,6 +36,10 @@ export default function App() {
     setEditingCam(null);
   };
 
+  const toggleAI = (id: string) => {
+    setCameras(prev => prev.map(c => c.id === id ? { ...c, aiEnabled: !c.aiEnabled } : c));
+  };
+
   return (
     <div className="h-screen bg-[#050505] text-white font-sans flex items-center justify-center p-0 md:p-4 overflow-hidden">
       <div className="w-full max-w-[1920px] h-full bg-[#0a0a0a] flex flex-col shadow-2xl shadow-black/50 border-0 md:border md:border-[#222] md:rounded-2xl overflow-hidden">
@@ -54,22 +60,37 @@ export default function App() {
                   </span>
                 </div>
 
-                <div className="relative group/menu">
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingCam({ id: cam.id, name: cam.name });
-                    }}
-                    className="p-1.5 hover:bg-white/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                  >
-                    <MoreVertical className="w-4 h-4 text-white/70" />
-                  </button>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-bold font-mono text-white/50 uppercase tracking-tighter">AI</span>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleAI(cam.id);
+                      }}
+                      className={`relative w-8 h-4 rounded-full transition-colors duration-200 outline-none ${cam.aiEnabled ? 'bg-blue-500' : 'bg-gray-700'}`}
+                    >
+                      <div className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform duration-200 ${cam.aiEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </button>
+                  </div>
+
+                  <div className="relative group/menu">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingCam({ id: cam.id, name: cam.name });
+                      }}
+                      className="p-1.5 hover:bg-white/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <MoreVertical className="w-4 h-4 text-white/70" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <div className="relative flex-1 flex items-center justify-center overflow-hidden">
                 {cam.url ? (
-                  <WebRTCCamera streamUrl={cam.url} camId={cam.id} />
+                  <WebRTCCamera streamUrl={cam.url} camId={cam.id} aiEnabled={cam.aiEnabled} />
                 ) : (
                   <div className="w-full h-full bg-black flex items-center justify-center">
                     <span className="text-gray-500 text-xs font-mono">NO SIGNAL</span>

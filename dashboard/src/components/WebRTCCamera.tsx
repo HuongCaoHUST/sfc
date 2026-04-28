@@ -6,15 +6,19 @@ import { wsListeners, connectSharedWS, PredictionCallback } from '../services/ai
 interface WebRTCCameraProps {
   streamUrl: string;
   camId: string;
+  aiEnabled?: boolean;
 }
 
-const WebRTCCamera = ({ streamUrl, camId }: WebRTCCameraProps) => {
+const WebRTCCamera = ({ streamUrl, camId, aiEnabled = true }: WebRTCCameraProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const [streamError, setStreamError] = useState<string | null>(null);
   const [aiError, setAiError] = useState<boolean>(false);
   const [predictions, setPredictions] = useState<AIInference[]>([]);
+  const [videoFps, setVideoFps] = useState<number>(0);
+
+  const lastVideoFrameTimes = useRef<number[]>([]);
 
   // 1. Kết nối WebRTC (Video Stream)
   useEffect(() => {
@@ -78,6 +82,48 @@ const WebRTCCamera = ({ streamUrl, camId }: WebRTCCameraProps) => {
     };
   }, [camId]);
 
+  // 3. Tính toán Video FPS sử dụng requestVideoFrameCallback
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    let frameCount = 0;
+    let lastTime = performance.now();
+    let requestId: number;
+
+    const updateFps = () => {
+      const now = performance.now();
+      frameCount++;
+
+      if (now - lastTime >= 1000) {
+        setVideoFps(frameCount);
+        frameCount = 0;
+        lastTime = now;
+      }
+
+      if ('requestVideoFrameCallback' in video) {
+        requestId = (video as any).requestVideoFrameCallback(updateFps);
+      } else {
+        // Fallback cho trình duyệt cũ
+        requestId = requestAnimationFrame(updateFps);
+      }
+    };
+
+    if ('requestVideoFrameCallback' in video) {
+      requestId = (video as any).requestVideoFrameCallback(updateFps);
+    } else {
+      requestId = requestAnimationFrame(updateFps);
+    }
+
+    return () => {
+      if ('cancelVideoFrameCallback' in video) {
+        (video as any).cancelVideoFrameCallback(requestId);
+      } else {
+        cancelAnimationFrame(requestId);
+      }
+    };
+  }, []);
+
   // 3. Vẽ Bounding Box
   useEffect(() => {
     const video = videoRef.current;
@@ -91,7 +137,7 @@ const WebRTCCamera = ({ streamUrl, camId }: WebRTCCameraProps) => {
     canvas.height = video.clientHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (aiError || predictions.length === 0 || !video.videoWidth) return;
+    if (!aiEnabled || aiError || predictions.length === 0 || !video.videoWidth) return;
 
     const videoRatio = video.videoWidth / video.videoHeight;
     const canvasRatio = canvas.width / canvas.height;
@@ -121,7 +167,7 @@ const WebRTCCamera = ({ streamUrl, camId }: WebRTCCameraProps) => {
       const scaledW = box.width * scaleX;
       const scaledH = box.height * scaleY;
 
-      const color = box.class_id === 1 ? '#00ff00' : '#ff3333';
+      const color = box.class_id === 0 ? '#3b82f6' : (box.class_id === 1 ? '#00ff00' : '#ff3333');
 
       ctx.lineWidth = 2;
       ctx.strokeStyle = color;
@@ -141,7 +187,7 @@ const WebRTCCamera = ({ streamUrl, camId }: WebRTCCameraProps) => {
       ctx.fillStyle = '#000000';
       ctx.fillText(labelText, scaledX + 4, scaledY - 5);
     });
-  }, [predictions, aiError]);
+  }, [predictions, aiError, aiEnabled]);
 
   if (streamError) {
     return (
@@ -160,6 +206,13 @@ const WebRTCCamera = ({ streamUrl, camId }: WebRTCCameraProps) => {
         <div className="absolute top-3 right-3 flex items-center gap-1.5 text-blue-400 bg-black/80 px-2.5 py-1 rounded border border-blue-500/30 z-20 shadow-lg pointer-events-none">
           <WifiOff className="w-3.5 h-3.5 animate-pulse" />
           <span className="text-[10px] font-mono font-bold">AI OFFLINE</span>
+        </div>
+      )}
+
+      {/* Hiển thị Video FPS ở góc trên bên trái của khung hình video */}
+      {!streamError && (
+        <div className="absolute top-12 left-3 bg-black/60 px-1.5 py-0.5 rounded border border-white/10 z-20 pointer-events-none">
+          <span className="text-[9px] font-mono font-bold text-blue-400">VIDEO FPS: {videoFps}</span>
         </div>
       )}
     </>
